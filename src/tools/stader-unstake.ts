@@ -6,7 +6,8 @@
  * Stader uses Hedera-native ContractExecuteTransaction (not EVM/ethers).
  * - Unstake: call stakingContract.unStake(uint256 amount) — amount in 8-decimal HBARX
  * - Withdraw: call undelegationContract.withdraw(uint256 index) — after 1 day cooldown
- * - Exchange rate: call stakingContract.getExchangeRate() → uint256 (8 decimals)
+ * - Exchange rate: derived from Bonzo oracle prices (HBARX_USD / HBAR_USD).
+ *   The on-chain getExchangeRate() returns 10^8 (base constant, not accrued rate).
  */
 
 import {
@@ -15,6 +16,7 @@ import {
   ContractFunctionParameters,
   Hbar,
 } from "@hashgraph/sdk";
+import { API } from "../config/contracts.js";
 import { CONTRACTS } from "../config/contracts.js";
 import { HBARX_DECIMALS, UNSTAKE_COOLDOWN_MS } from "../config/constants.js";
 
@@ -26,20 +28,42 @@ export interface UnstakePreview {
 }
 
 /**
- * Get the current HBARX → HBAR exchange rate from the Stader staking contract.
- * Rate is returned with 8 decimals.
+ * Get the current HBARX → HBAR exchange rate.
+ *
+ * Derived from Bonzo oracle prices (HBARX_USD / HBAR_USD) — the on-chain
+ * getExchangeRate() returns a base constant (10^8 = 1.0) not the accrued rate.
+ * The client parameter is kept for API compatibility.
  */
-export async function getExchangeRate(client: Client): Promise<number> {
-  const tx = new ContractExecuteTransaction()
-    .setContractId(CONTRACTS.stader.stakingContract)
-    .setGas(2_000_000)
-    .setFunction("getExchangeRate");
+export async function getExchangeRate(_client?: Client): Promise<number> {
+  const res = await fetch(API.market);
+  if (!res.ok) throw new Error(`Bonzo API error: ${res.status}`);
+  const data: unknown = await res.json();
+  const reserves = Array.isArray(data) ? data : ((data as Record<string, unknown>).reserves ?? (data as Record<string, unknown>).data ?? []) as unknown[];
 
-  const response = await tx.execute(client);
-  const record = await response.getRecord(client);
-  const rate = record.contractFunctionResult!.getUint256(0);
+  const find = (sym: string) =>
+    (reserves as Record<string, unknown>[]).find(
+      (r) => String(r.symbol ?? "").toUpperCase() === sym
+    );
 
-  return Number(rate) / 10 ** HBARX_DECIMALS;
+  const hbarx = find("HBARX");
+  const whbar = find("WHBAR") ?? find("HBAR");
+
+  if (!hbarx || !whbar) throw new Error("HBARX or WHBAR reserve not found");
+
+  // Prices in WAD (18 decimals) — use display string as fallback
+  const parsePrice = (r: Record<string, unknown>): number => {
+    const wad = r.price_usd_wad;
+    if (typeof wad === "string" && wad.startsWith("0x")) {
+      return Number(BigInt(wad)) / 1e18;
+    }
+    return parseFloat(String(r.price_usd_display ?? "0").replace(/[^0-9.]/g, ""));
+  };
+
+  const hbarxUsd = parsePrice(hbarx);
+  const hbarUsd = parsePrice(whbar);
+  if (hbarUsd === 0) throw new Error("HBAR price is zero");
+
+  return hbarxUsd / hbarUsd;
 }
 
 /**

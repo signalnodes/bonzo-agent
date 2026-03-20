@@ -36,7 +36,6 @@ An AI-powered DeFi agent that executes a leveraged yield strategy on Hedera:
 - LendingPool: `0x236897c518996163E7b313aD21D1C9fCC7BA1afc`
 - AaveProtocolDataProvider: `0x78feDC4D7010E409A0c0c7aF964cc517D3dCde18`
 - AaveOracle: `0xc0Bb4030b55093981700559a0B751DCf7Db03cBB`
-- WETHGateway: `0x9a601543e9264255BebB20Cef0E7924e97127105`
 - Data API: `https://mainnet-data-staging.bonzo.finance/market`
 - HBARX borrow rate: ~0.6% (variable, 5.26% utilization)
 - Existing Bonzo plugin handles: deposit, withdraw, borrow, repay, approve

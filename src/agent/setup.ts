@@ -45,6 +45,15 @@ import {
   VAULT_ABI,
 } from "../tools/vault-deposit.js";
 import { getVaultAPY, recordPPSReading } from "../strategy/vault-apy.js";
+import {
+  lendDeposit,
+  lendBorrow,
+  lendRepay,
+  lendWithdraw,
+  getEvmAlias,
+  tokenAddress,
+  toWei,
+} from "../tools/bonzo-lend.js";
 
 import { SYSTEM_PROMPT } from "./system-prompt.js";
 
@@ -445,6 +454,119 @@ function buildCustomTools(hederaClient: Client): DynamicStructuredTool[] {
     },
   });
 
+  // --- Bonzo Lend direct tools (correct alias-based onBehalfOf) ---
+  // The HAK Bonzo plugin resolves onBehalfOf to the long-form EVM address because
+  // AccountInfo.evmAddress is undefined in the Hedera SDK. This causes a mismatch with
+  // msg.sender (which is the ECDSA alias) and triggers delegation errors on borrow/withdraw.
+  // These tools derive the alias from the private key and use it for all LP calls.
+
+  const alias = getEvmAlias(env.hedera.privateKey);
+
+  const bonzoDepositTool = new DynamicStructuredTool({
+    name: "bonzo_deposit",
+    description:
+      "EXECUTE: Deposit a token into Bonzo Lend as collateral. " +
+      "Requires prior ERC-20 approval of the LendingPool (use approve_erc20_tool). " +
+      "Supported tokens: USDC, WHBAR, HBARX. Amount is human-readable (e.g. '5' for 5 USDC).",
+    schema: z.object({
+      tokenSymbol: z.enum(["USDC", "WHBAR", "HBARX"]),
+      amount: z.string().describe("Human-readable amount (e.g. '5' for 5 USDC)"),
+    }),
+    func: async ({ tokenSymbol, amount }) => {
+      const asset = tokenAddress(tokenSymbol);
+      const amountWei = toWei(amount, tokenSymbol);
+      const result = await lendDeposit(hederaClient, env.hedera.privateKey, asset, amountWei);
+      return JSON.stringify({ ...result, tokenSymbol, amount, onBehalfOf: alias });
+    },
+  });
+
+  const bonzoBorrowTool = new DynamicStructuredTool({
+    name: "bonzo_borrow",
+    description:
+      "EXECUTE: Borrow a token from Bonzo Lend against existing collateral. " +
+      "Supported tokens: USDC, WHBAR, HBARX. Amount is human-readable.",
+    schema: z.object({
+      tokenSymbol: z.enum(["USDC", "WHBAR", "HBARX"]),
+      amount: z.string().describe("Human-readable amount to borrow"),
+      rateMode: z.enum(["1", "2"]).default("2").describe("1=stable (disabled), 2=variable"),
+    }),
+    func: async ({ tokenSymbol, amount, rateMode }) => {
+      const asset = tokenAddress(tokenSymbol);
+      const amountWei = toWei(amount, tokenSymbol);
+      const result = await lendBorrow(
+        hederaClient, env.hedera.privateKey, asset, amountWei,
+        parseInt(rateMode) as 1 | 2
+      );
+      return JSON.stringify({ ...result, tokenSymbol, amount, onBehalfOf: alias });
+    },
+  });
+
+  const bonzoRepayTool = new DynamicStructuredTool({
+    name: "bonzo_repay",
+    description:
+      "EXECUTE: Repay a borrow on Bonzo Lend. " +
+      "Requires prior ERC-20 approval of the LendingPool for the repay token. " +
+      "Pass amount='max' to repay full debt.",
+    schema: z.object({
+      tokenSymbol: z.enum(["USDC", "WHBAR", "HBARX"]),
+      amount: z.string().describe("Human-readable amount, or 'max' to repay all"),
+      rateMode: z.enum(["1", "2"]).default("2"),
+    }),
+    func: async ({ tokenSymbol, amount, rateMode }) => {
+      const asset = tokenAddress(tokenSymbol);
+      const MAX = 2n ** 256n - 1n;
+      const amountWei = amount === "max" ? MAX : toWei(amount, tokenSymbol);
+      const result = await lendRepay(
+        hederaClient, env.hedera.privateKey, asset, amountWei,
+        parseInt(rateMode) as 1 | 2
+      );
+      return JSON.stringify({ ...result, tokenSymbol, amount, onBehalfOf: alias });
+    },
+  });
+
+  const bonzoWithdrawTool = new DynamicStructuredTool({
+    name: "bonzo_withdraw",
+    description:
+      "EXECUTE: Withdraw collateral from Bonzo Lend (burns aTokens). " +
+      "Pass amount='max' to withdraw everything.",
+    schema: z.object({
+      tokenSymbol: z.enum(["USDC", "WHBAR", "HBARX"]),
+      amount: z.string().describe("Human-readable amount, or 'max' to withdraw all"),
+    }),
+    func: async ({ tokenSymbol, amount }) => {
+      const asset = tokenAddress(tokenSymbol);
+      const MAX = 2n ** 256n - 1n;
+      const amountWei = amount === "max" ? MAX : toWei(amount, tokenSymbol);
+      const result = await lendWithdraw(hederaClient, env.hedera.privateKey, asset, amountWei);
+      return JSON.stringify({ ...result, tokenSymbol, amount, to: alias });
+    },
+  });
+
+  const bonzoPositionTool = new DynamicStructuredTool({
+    name: "bonzo_get_position",
+    description:
+      "Read-only: Get the current Bonzo Lend position for this account (collateral, debt, health factor, available borrows).",
+    schema: z.object({}),
+    func: async () => {
+      const provider = new ethers.JsonRpcProvider(HEDERA_JSON_RPC);
+      const lp = new ethers.Contract(
+        CONTRACTS.lend.lendingPool,
+        ["function getUserAccountData(address) view returns (uint256,uint256,uint256,uint256,uint256,uint256)"],
+        provider
+      );
+      const [collateral, debt, available, liqThreshold, ltv, hf] =
+        await lp.getUserAccountData(alias);
+      return JSON.stringify({
+        address: alias,
+        collateralETH: ethers.formatEther(collateral),
+        debtETH: ethers.formatEther(debt),
+        availableBorrowsETH: ethers.formatEther(available),
+        healthFactor: hf === ethers.MaxUint256 ? "∞" : ethers.formatEther(hf),
+        ltv: ltv.toString(),
+      });
+    },
+  });
+
   return [
     // Analysis / read-only
     spreadAnalysisTool,
@@ -467,12 +589,32 @@ function buildCustomTools(hederaClient: Client): DynamicStructuredTool[] {
     vaultShareBalanceTool,
     // Vault APY
     getVaultAPYTool,
+    // Bonzo Lend (direct, alias-correct)
+    bonzoDepositTool,
+    bonzoBorrowTool,
+    bonzoRepayTool,
+    bonzoWithdrawTool,
+    bonzoPositionTool,
   ];
 }
 
 /**
  * Create a Hedera SDK client from env credentials.
  */
+function parsePrivateKey(keyStr: string): PrivateKey {
+  // Raw 32-byte hex (64 chars, no DER prefix) — must use ECDSA or ED25519 parser directly.
+  // fromStringDer() misidentifies raw hex as ED25519. Prefer ECDSA for EVM compatibility.
+  const isRawHex = /^[0-9a-fA-F]{64}$/.test(keyStr);
+  if (isRawHex) {
+    try { return PrivateKey.fromStringECDSA(keyStr); } catch {}
+    return PrivateKey.fromStringED25519(keyStr);
+  }
+  // DER-encoded key (has OID prefix)
+  try { return PrivateKey.fromStringDer(keyStr); } catch {}
+  try { return PrivateKey.fromStringECDSA(keyStr); } catch {}
+  return PrivateKey.fromStringED25519(keyStr);
+}
+
 function createHederaClient(): Client {
   const client =
     env.hedera.network === "mainnet"
@@ -481,7 +623,7 @@ function createHederaClient(): Client {
 
   client.setOperator(
     AccountId.fromString(env.hedera.accountId),
-    PrivateKey.fromStringDer(env.hedera.privateKey),
+    parsePrivateKey(env.hedera.privateKey),
   );
 
   return client;
@@ -493,14 +635,15 @@ function createHederaClient(): Client {
  */
 function createLLM(): { llm: BaseChatModel; modelName: string } {
   if (env.anthropic.apiKey) {
-    console.log("Using Anthropic Claude (claude-opus-4-6)");
+    const model = process.env.AGENT_MODEL ?? "claude-haiku-4-5-20251001";
+    console.log(`Using Anthropic Claude (${model})`);
     return {
       llm: new ChatAnthropic({
-        model: "claude-opus-4-6",
+        model,
         temperature: 0,
         apiKey: env.anthropic.apiKey,
       }),
-      modelName: "claude-opus-4-6",
+      modelName: model,
     };
   }
 

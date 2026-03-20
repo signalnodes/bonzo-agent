@@ -6,7 +6,6 @@ export const CONTRACTS = {
     lendingPool: "0x236897c518996163E7b313aD21D1C9fCC7BA1afc",
     dataProvider: "0x78feDC4D7010E409A0c0c7aF964cc517D3dCde18",
     oracle: "0xc0Bb4030b55093981700559a0B751DCf7Db03cBB",
-    wethGateway: "0x9a601543e9264255BebB20Cef0E7924e97127105",
   },
 
   // Tokens

@@ -7,7 +7,7 @@
  */
 
 import { fetchMarketData, analyzeSpread } from "./strategy/spread.js";
-import { getVaultAPY, getBestAPYEstimate } from "./strategy/vault-apy.js";
+import { getVaultAPY } from "./strategy/vault-apy.js";
 import { evaluateEntry, type StrategyConfig } from "./strategy/orchestrator.js";
 
 const POLL_INTERVAL_MS = 60_000; // 1 minute
@@ -32,7 +32,9 @@ async function runCheck() {
   console.log(`WHBAR Borrow APY:    ${market.whbarBorrowApy}%`);
   console.log(`USDC Borrow APY:     ${market.usdcBorrowApy}%`);
 
-  // Live vault APY from on-chain data
+  // Live vault APY from on-chain data (single call, result reused for spread)
+  let vaultApy = 70;
+  let apyLabel = "70% (fallback estimate)";
   console.log("\n=== Vault APY (on-chain) ===");
   try {
     const apyResult = await getVaultAPY();
@@ -42,13 +44,16 @@ async function runCheck() {
     console.log(`APY (7d):            ${apyResult.apy7d !== null ? `${apyResult.apy7d.toFixed(2)}%` : "Need ~7d of readings"}`);
     console.log(`APY (30d):           ${apyResult.apy30d !== null ? `${apyResult.apy30d.toFixed(2)}%` : "Need ~30d of readings"}`);
     console.log(`Readings stored:     ${apyResult.readingCount}`);
+    const liveApy = apyResult.apy7d ?? apyResult.apy24h ?? apyResult.apy;
+    if (liveApy !== null && liveApy > 0) {
+      vaultApy = liveApy;
+      apyLabel = `${liveApy.toFixed(1)}% (live)`;
+    }
   } catch (err) {
     console.log(`Vault APY fetch failed: ${err instanceof Error ? err.message : err}`);
   }
 
-  // Spread analysis using best available APY
-  const vaultApy = await getBestAPYEstimate().catch(() => null) ?? 70;
-  const apyLabel = vaultApy === 70 ? "70% (fallback estimate)" : `${vaultApy.toFixed(1)}% (live)`;
+  // Spread analysis using best available APY (reuses result from above)
   const spread = analyzeSpread(market, vaultApy);
 
   console.log("\n=== Spread Analysis ===");

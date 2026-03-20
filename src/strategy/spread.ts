@@ -69,7 +69,7 @@ export async function fetchMarketData(): Promise<MarketData> {
   return {
     hbarxBorrowApy: parseValue(hbarx.variable_borrow_apy ?? hbarx.variableBorrowRate),
     hbarxSupplyApy: parseValue(hbarx.supply_apy ?? hbarx.liquidityRate),
-    hbarxUtilization: parseValue(hbarx.utilization ?? hbarx.utilizationRate, ["display", "value"]),
+    hbarxUtilization: parseValue(hbarx.utilization_rate ?? hbarx.utilization ?? hbarx.utilizationRate),
     hbarxAvailableLiquidity: parseValue(hbarx.available_liquidity ?? hbarx.availableLiquidity, ["usd_display", "usd_abbreviated"]),
     whbarBorrowApy: parseValue(whbar?.variable_borrow_apy ?? whbar?.variableBorrowRate),
     usdcBorrowApy: parseValue(usdc?.variable_borrow_apy ?? usdc?.variableBorrowRate),
