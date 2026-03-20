@@ -6,6 +6,10 @@
  */
 
 import { ethers } from "ethers";
+import { CONTRACTS } from "../config/contracts.js";
+
+/** Default vault address for the USDC-HBAR dual vault. */
+export const USDC_HBAR_VAULT = CONTRACTS.vaults.usdcHbar;
 
 // BonzoVaultConcLiq ABI (minimal — just what we need)
 export const VAULT_ABI = [

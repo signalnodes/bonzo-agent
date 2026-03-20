@@ -1,0 +1,586 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Bonzo Vault Keeper</title>
+<style>
+  *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+
+  :root {
+    --bg: #0f1729;
+    --chat-bg: #1a2332;
+    --user-msg: #2563eb;
+    --agent-msg: #1e293b;
+    --accent: #22d3ee;
+    --alert-bg: #78350f;
+    --alert-border: #f59e0b;
+    --text: #e2e8f0;
+    --text-dim: #94a3b8;
+    --border: #334155;
+    --input-bg: #0f172a;
+    --radius: 12px;
+  }
+
+  html,body {
+    height: 100%;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    overflow: hidden;
+  }
+
+  /* Layout */
+  #app {
+    display: flex;
+    flex-direction: column;
+    height: 100dvh;
+    max-width: 900px;
+    margin: 0 auto;
+  }
+
+  /* Header */
+  header {
+    padding: 16px 20px 12px;
+    text-align: center;
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+  header h1 {
+    font-size: 1.4rem;
+    font-weight: 700;
+    color: var(--accent);
+    letter-spacing: 0.5px;
+  }
+  header p {
+    font-size: 0.8rem;
+    color: var(--text-dim);
+    margin-top: 2px;
+  }
+
+  /* Status bar */
+  #status-bar {
+    display: flex;
+    gap: 16px;
+    padding: 8px 20px;
+    font-size: 0.75rem;
+    color: var(--text-dim);
+    border-bottom: 1px solid var(--border);
+    overflow-x: auto;
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
+  .stat-item { display: flex; gap: 4px; align-items: center; }
+  .stat-label { color: var(--text-dim); }
+  .stat-value { color: var(--accent); font-weight: 600; }
+  .stat-value.negative { color: #f87171; }
+  .stat-value.positive { color: #4ade80; }
+
+  /* Alerts banner */
+  #alerts-banner {
+    flex-shrink: 0;
+    max-height: 120px;
+    overflow-y: auto;
+  }
+  .alert-item {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    padding: 8px 20px;
+    font-size: 0.78rem;
+    border-bottom: 1px solid rgba(245,158,11,0.2);
+    animation: fadeIn 0.3s ease;
+  }
+  .alert-item.warning {
+    background: rgba(245,158,11,0.08);
+    border-left: 3px solid var(--alert-border);
+  }
+  .alert-item.critical {
+    background: rgba(239,68,68,0.1);
+    border-left: 3px solid #ef4444;
+  }
+  .alert-item.info {
+    background: rgba(34,211,238,0.06);
+    border-left: 3px solid var(--accent);
+  }
+  .alert-time { color: var(--text-dim); font-size: 0.7rem; flex-shrink: 0; }
+  .alert-msg { color: var(--text); }
+  .alert-dismiss {
+    margin-left: auto;
+    background: none;
+    border: none;
+    color: var(--text-dim);
+    cursor: pointer;
+    font-size: 1rem;
+    line-height: 1;
+    padding: 0 4px;
+    flex-shrink: 0;
+  }
+
+  /* Chat area */
+  #chat-area {
+    flex: 1;
+    overflow-y: auto;
+    padding: 16px 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    scroll-behavior: smooth;
+  }
+
+  .message {
+    max-width: 80%;
+    padding: 10px 14px;
+    border-radius: var(--radius);
+    font-size: 0.9rem;
+    line-height: 1.55;
+    word-wrap: break-word;
+    animation: fadeIn 0.25s ease;
+  }
+  .message.user {
+    align-self: flex-end;
+    background: var(--user-msg);
+    color: #fff;
+    border-bottom-right-radius: 4px;
+  }
+  .message.agent {
+    align-self: flex-start;
+    background: var(--agent-msg);
+    color: var(--text);
+    border-bottom-left-radius: 4px;
+  }
+
+  /* Markdown inside agent messages */
+  .message.agent strong { color: var(--accent); font-weight: 600; }
+  .message.agent em { font-style: italic; color: #cbd5e1; }
+  .message.agent code {
+    background: rgba(0,0,0,0.3);
+    padding: 1px 5px;
+    border-radius: 4px;
+    font-family: 'Fira Code', 'Consolas', monospace;
+    font-size: 0.82em;
+  }
+  .message.agent pre {
+    background: rgba(0,0,0,0.35);
+    padding: 10px 12px;
+    border-radius: 8px;
+    overflow-x: auto;
+    margin: 6px 0;
+    font-size: 0.82em;
+  }
+  .message.agent pre code {
+    background: none;
+    padding: 0;
+  }
+  .message.agent ul, .message.agent ol {
+    margin: 4px 0 4px 18px;
+  }
+  .message.agent li { margin: 2px 0; }
+  .message.agent p { margin: 4px 0; }
+
+  /* Typing indicator */
+  .typing {
+    align-self: flex-start;
+    display: flex;
+    gap: 5px;
+    padding: 12px 18px;
+    background: var(--agent-msg);
+    border-radius: var(--radius);
+    border-bottom-left-radius: 4px;
+  }
+  .typing span {
+    width: 8px; height: 8px;
+    background: var(--text-dim);
+    border-radius: 50%;
+    animation: bounce 1.4s infinite ease-in-out;
+  }
+  .typing span:nth-child(2) { animation-delay: 0.16s; }
+  .typing span:nth-child(3) { animation-delay: 0.32s; }
+
+  @keyframes bounce {
+    0%,80%,100% { transform: scale(0.6); opacity: 0.4; }
+    40% { transform: scale(1); opacity: 1; }
+  }
+  @keyframes fadeIn {
+    from { opacity: 0; transform: translateY(6px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  /* Input area */
+  #input-area {
+    display: flex;
+    gap: 8px;
+    padding: 12px 20px 16px;
+    border-top: 1px solid var(--border);
+    background: var(--bg);
+    flex-shrink: 0;
+  }
+  #msg-input {
+    flex: 1;
+    padding: 10px 14px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: var(--input-bg);
+    color: var(--text);
+    font-size: 0.9rem;
+    outline: none;
+    transition: border-color 0.2s;
+  }
+  #msg-input:focus { border-color: var(--accent); }
+  #msg-input::placeholder { color: var(--text-dim); }
+
+  #send-btn {
+    padding: 10px 20px;
+    border-radius: 8px;
+    border: none;
+    background: var(--user-msg);
+    color: #fff;
+    font-size: 0.9rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.2s, transform 0.1s;
+    white-space: nowrap;
+  }
+  #send-btn:hover { background: #3b82f6; }
+  #send-btn:active { transform: scale(0.97); }
+  #send-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+  /* Scrollbar */
+  ::-webkit-scrollbar { width: 6px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+  /* Quick action chips */
+  #quick-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    padding: 4px 0 8px;
+  }
+  .chip {
+    padding: 6px 14px;
+    border-radius: 20px;
+    border: 1px solid var(--border);
+    background: transparent;
+    color: var(--accent);
+    font-size: 0.78rem;
+    cursor: pointer;
+    transition: background 0.2s, border-color 0.2s;
+    white-space: nowrap;
+  }
+  .chip:hover {
+    background: rgba(34,211,238,0.1);
+    border-color: var(--accent);
+  }
+
+  /* Mobile */
+  @media (max-width: 640px) {
+    #app { max-width: 100%; }
+    .message { max-width: 90%; }
+    header h1 { font-size: 1.15rem; }
+    #status-bar { gap: 10px; padding: 6px 12px; font-size: 0.7rem; }
+    #input-area { padding: 8px 12px 12px; }
+  }
+</style>
+</head>
+<body>
+<div id="app">
+  <header>
+    <h1>Bonzo Vault Keeper</h1>
+    <p>AI-Powered DeFi Strategy Agent on Hedera</p>
+  </header>
+
+  <div id="status-bar">
+    <div class="stat-item">
+      <span class="stat-label">HBARX Borrow:</span>
+      <span class="stat-value" id="st-borrow">--</span>
+    </div>
+    <div class="stat-item">
+      <span class="stat-label">Vault APY:</span>
+      <span class="stat-value positive" id="st-vault">--</span>
+    </div>
+    <div class="stat-item">
+      <span class="stat-label">Net Spread:</span>
+      <span class="stat-value" id="st-spread">--</span>
+    </div>
+    <div class="stat-item">
+      <span class="stat-label">Utilization:</span>
+      <span class="stat-value" id="st-util">--</span>
+    </div>
+    <div class="stat-item">
+      <span class="stat-label">Strategy:</span>
+      <span class="stat-value" id="st-viable">--</span>
+    </div>
+  </div>
+
+  <div id="alerts-banner"></div>
+
+  <div id="chat-area">
+    <div class="message agent">
+      Welcome! I'm the <strong>Bonzo Vault Keeper</strong> agent. I can help you execute and monitor the leveraged HBARX yield strategy on Hedera.
+      <div id="quick-actions">
+        <button class="chip" data-msg="What's the current spread?">Current Spread</button>
+        <button class="chip" data-msg="Is now a good time to enter the strategy?">Entry Viability</button>
+        <button class="chip" data-msg="What's the vault APY?">Vault APY</button>
+        <button class="chip" data-msg="Show my lending position and health factor">My Position</button>
+        <button class="chip" data-msg="Walk me through the full strategy steps">Strategy Steps</button>
+        <button class="chip" data-msg="What are the current market conditions?">Market Data</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="input-area">
+    <input type="text" id="msg-input" placeholder="Ask about the HBARX spread strategy..." autocomplete="off" />
+    <button id="send-btn">Send</button>
+  </div>
+</div>
+
+<script>
+(function() {
+  // Session
+  let sessionId = localStorage.getItem('bonzo_session');
+  if (!sessionId) {
+    sessionId = crypto.randomUUID();
+    localStorage.setItem('bonzo_session', sessionId);
+  }
+
+  const chatArea = document.getElementById('chat-area');
+  const input = document.getElementById('msg-input');
+  const sendBtn = document.getElementById('send-btn');
+  const alertsBanner = document.getElementById('alerts-banner');
+
+  let isWaiting = false;
+
+  // ---------- Markdown renderer (simple) ----------
+  function renderMarkdown(text) {
+    // Escape HTML
+    let html = text
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;');
+
+    // Code blocks (``` ... ```)
+    html = html.replace(/```(\w*)\n?([\s\S]*?)```/g, function(_, lang, code) {
+      return '<pre><code>' + code.trim() + '</code></pre>';
+    });
+
+    // Inline code
+    html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
+
+    // Bold
+    html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+
+    // Italic
+    html = html.replace(/\*(.+?)\*/g, '<em>$1</em>');
+
+    // Unordered lists
+    html = html.replace(/^[\-\*] (.+)$/gm, '<li>$1</li>');
+    html = html.replace(/((?:<li>.*<\/li>\n?)+)/g, '<ul>$1</ul>');
+
+    // Ordered lists
+    html = html.replace(/^\d+\. (.+)$/gm, '<li>$1</li>');
+    // Wrap consecutive <li> not already in <ul>
+    html = html.replace(/(?<!<\/ul>)((?:<li>.*<\/li>\n?)+)/g, function(match) {
+      if (match.includes('<ul>')) return match;
+      return '<ol>' + match + '</ol>';
+    });
+
+    // Paragraphs / line breaks
+    html = html.replace(/\n{2,}/g, '</p><p>');
+    html = html.replace(/\n/g, '<br>');
+    html = '<p>' + html + '</p>';
+
+    // Clean empty paragraphs
+    html = html.replace(/<p>\s*<\/p>/g, '');
+
+    return html;
+  }
+
+  // ---------- Chat ----------
+  function appendMessage(role, content) {
+    const div = document.createElement('div');
+    div.className = 'message ' + role;
+    if (role === 'agent') {
+      div.innerHTML = renderMarkdown(content);
+    } else {
+      div.textContent = content;
+    }
+    chatArea.appendChild(div);
+    scrollToBottom();
+  }
+
+  function showTyping() {
+    const div = document.createElement('div');
+    div.className = 'typing';
+    div.id = 'typing-indicator';
+    div.innerHTML = '<span></span><span></span><span></span>';
+    chatArea.appendChild(div);
+    scrollToBottom();
+  }
+
+  function hideTyping() {
+    const el = document.getElementById('typing-indicator');
+    if (el) el.remove();
+  }
+
+  function scrollToBottom() {
+    requestAnimationFrame(() => {
+      chatArea.scrollTop = chatArea.scrollHeight;
+    });
+  }
+
+  async function sendMessage() {
+    const text = input.value.trim();
+    if (!text || isWaiting) return;
+
+    appendMessage('user', text);
+    input.value = '';
+    isWaiting = true;
+    sendBtn.disabled = true;
+    showTyping();
+
+    try {
+      const res = await fetch('/api/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message: text, sessionId }),
+      });
+      const data = await res.json();
+      hideTyping();
+
+      if (data.error) {
+        appendMessage('agent', 'Error: ' + (data.detail || data.error));
+      } else {
+        appendMessage('agent', data.response);
+        if (data.sessionId) {
+          sessionId = data.sessionId;
+          localStorage.setItem('bonzo_session', sessionId);
+        }
+      }
+    } catch (err) {
+      hideTyping();
+      appendMessage('agent', 'Connection error. Please try again.');
+    } finally {
+      isWaiting = false;
+      sendBtn.disabled = false;
+      input.focus();
+    }
+  }
+
+  sendBtn.addEventListener('click', sendMessage);
+  input.addEventListener('keydown', function(e) {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      sendMessage();
+    }
+  });
+
+  // ---------- Status bar ----------
+  async function fetchStatus() {
+    try {
+      const res = await fetch('/api/status');
+      const data = await res.json();
+      const m = data.market;
+      const s = data.spread || {};
+      const v = data.vault || {};
+
+      if (m) {
+        document.getElementById('st-borrow').textContent = m.hbarxBorrowApy != null ? m.hbarxBorrowApy.toFixed(2) + '%' : '--';
+        document.getElementById('st-util').textContent = m.hbarxUtilization != null ? m.hbarxUtilization.toFixed(1) + '%' : '--';
+      }
+
+      document.getElementById('st-vault').textContent = v.apy != null ? v.apy.toFixed(1) + '%' : '--';
+
+      const spreadEl = document.getElementById('st-spread');
+      if (s.netSpread != null) {
+        spreadEl.textContent = s.netSpread.toFixed(1) + '%';
+        spreadEl.className = 'stat-value ' + (s.netSpread > 0 ? 'positive' : 'negative');
+      }
+
+      const viableEl = document.getElementById('st-viable');
+      if (s.netSpread != null) {
+        const viable = s.netSpread > 0;
+        viableEl.textContent = viable ? 'Viable' : 'Not Viable';
+        viableEl.className = 'stat-value ' + (viable ? 'positive' : 'negative');
+      }
+
+      // Show monitor pulse
+      if (data.monitor && data.monitor.running) {
+        viableEl.title = 'Monitor running — ' + (data.monitor.checkCount || 0) + ' checks';
+      }
+    } catch {
+      // silent
+    }
+  }
+
+  fetchStatus();
+  setInterval(fetchStatus, 30000);
+
+  // ---------- SSE Alerts ----------
+  function connectAlerts() {
+    const evtSource = new EventSource('/api/alerts');
+
+    evtSource.onmessage = function(event) {
+      try {
+        const alert = JSON.parse(event.data);
+        addAlertBanner(alert);
+      } catch {}
+    };
+
+    evtSource.onerror = function() {
+      evtSource.close();
+      // Reconnect after 5s
+      setTimeout(connectAlerts, 5000);
+    };
+  }
+
+  function addAlertBanner(alert) {
+    const div = document.createElement('div');
+    div.className = 'alert-item ' + (alert.level || 'warning');
+
+    const time = new Date(alert.timestamp).toLocaleTimeString();
+
+    const titleHtml = alert.title ? '<strong>' + escapeHtml(alert.title) + ':</strong> ' : '';
+    div.innerHTML =
+      '<span class="alert-time">' + time + '</span>' +
+      '<span class="alert-msg">' + titleHtml + escapeHtml(alert.message) + '</span>' +
+      '<button class="alert-dismiss" title="Dismiss">&times;</button>';
+
+    div.querySelector('.alert-dismiss').addEventListener('click', function() {
+      div.remove();
+    });
+
+    alertsBanner.appendChild(div);
+
+    // Keep max 5 visible
+    while (alertsBanner.children.length > 5) {
+      alertsBanner.removeChild(alertsBanner.firstChild);
+    }
+  }
+
+  function escapeHtml(text) {
+    const d = document.createElement('div');
+    d.textContent = text;
+    return d.innerHTML;
+  }
+
+  connectAlerts();
+
+  // Quick action chips
+  document.querySelectorAll('.chip[data-msg]').forEach(function(btn) {
+    btn.addEventListener('click', function() {
+      if (isWaiting) return;
+      input.value = btn.getAttribute('data-msg');
+      sendMessage();
+      // Remove chips after first use
+      const qa = document.getElementById('quick-actions');
+      if (qa) qa.remove();
+    });
+  });
+
+  // Focus input on load
+  input.focus();
+})();
+</script>
+</body>
+</html>

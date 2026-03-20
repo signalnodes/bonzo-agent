@@ -1,4 +1,9 @@
 import { fetchMarketData, analyzeSpread, fetchHealthFactor, type SpreadAnalysis, type MarketData } from "./spread.js";
+import {
+  HEALTH_FACTOR_CRITICAL,
+  HEALTH_FACTOR_WARNING,
+  UTILIZATION_WARNING_THRESHOLD,
+} from "../config/constants.js";
 
 export interface PositionStatus {
   market: MarketData;
@@ -7,10 +12,6 @@ export interface PositionStatus {
   alerts: string[];
   timestamp: Date;
 }
-
-const HEALTH_FACTOR_WARNING = 2.0;
-const HEALTH_FACTOR_CRITICAL = 1.5;
-const MIN_SPREAD_THRESHOLD = 5.0;
 
 /**
  * Run a full position health check.
@@ -47,7 +48,7 @@ export async function checkPosition(
   }
 
   // HBARX utilization alerts (high utilization = rising borrow rates)
-  if (market.hbarxUtilization > 50) {
+  if (market.hbarxUtilization > UTILIZATION_WARNING_THRESHOLD) {
     alerts.push(
       `NOTICE: HBARX utilization at ${market.hbarxUtilization.toFixed(1)}% — borrow rates may increase.`
     );

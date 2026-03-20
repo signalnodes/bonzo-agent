@@ -26,17 +26,19 @@ export async function fetchMarketData(): Promise<MarketData> {
     throw new Error(`Bonzo API error: ${res.status} ${res.statusText}`);
   }
 
-  const data = await res.json() as any;
+  const data: unknown = await res.json();
 
-  // The API returns an array of reserve objects
-  const reserves = Array.isArray(data) ? data : data.reserves ?? data.data ?? [];
+  // The API returns an array of reserve objects (or wraps them in a key)
+  const raw = data as Record<string, unknown>;
+  const reserves: Record<string, unknown>[] =
+    Array.isArray(data) ? data : (raw.reserves ?? raw.data ?? []) as Record<string, unknown>[];
 
   const findReserve = (symbol: string) =>
     reserves.find(
-      (r: any) =>
-        r.symbol?.toUpperCase() === symbol.toUpperCase() ||
-        r.name?.toUpperCase() === symbol.toUpperCase()
-    );
+      (r) =>
+        String(r.symbol ?? "").toUpperCase() === symbol.toUpperCase() ||
+        String(r.name ?? "").toUpperCase() === symbol.toUpperCase()
+    ) as Record<string, unknown> | undefined;
 
   const hbarx = findReserve("HBARX");
   const whbar = findReserve("WHBAR") ?? findReserve("HBAR");
@@ -46,36 +48,31 @@ export async function fetchMarketData(): Promise<MarketData> {
     throw new Error("HBARX reserve not found in market data");
   }
 
-  // API returns nested objects for amounts, and direct numbers for APYs
-  const parseApy = (val: any): number => {
+  /**
+   * Parse a value from the Bonzo API that can be a number, string, or
+   * an object with display/usd fields (the API uses all three shapes).
+   */
+  const parseValue = (val: unknown, objectKeys: string[] = ["display", "value"]): number => {
     if (typeof val === "number") return val;
     if (typeof val === "string") return parseFloat(val);
+    if (typeof val === "object" && val !== null) {
+      const obj = val as Record<string, unknown>;
+      for (const key of objectKeys) {
+        if (obj[key] !== undefined) {
+          return parseFloat(String(obj[key]).replace(/[,$a-zA-Z]/g, ""));
+        }
+      }
+    }
     return 0;
   };
 
-  const parseLiquidity = (val: any): number => {
-    if (typeof val === "object" && val !== null) {
-      // Bonzo API returns { usd_display: "3,790,731.46", ... }
-      const usd = val.usd_display ?? val.usd_abbreviated ?? "0";
-      return parseFloat(String(usd).replace(/[,$a-zA-Z]/g, ""));
-    }
-    return parseFloat(String(val ?? "0"));
-  };
-
-  const parseUtilization = (val: any): number => {
-    if (typeof val === "object" && val !== null) {
-      return parseFloat(val.display ?? val.value ?? "0");
-    }
-    return parseApy(val);
-  };
-
   return {
-    hbarxBorrowApy: parseApy(hbarx.variable_borrow_apy ?? hbarx.variableBorrowRate),
-    hbarxSupplyApy: parseApy(hbarx.supply_apy ?? hbarx.liquidityRate),
-    hbarxUtilization: parseUtilization(hbarx.utilization ?? hbarx.utilizationRate),
-    hbarxAvailableLiquidity: parseLiquidity(hbarx.available_liquidity ?? hbarx.availableLiquidity),
-    whbarBorrowApy: parseApy(whbar?.variable_borrow_apy ?? whbar?.variableBorrowRate),
-    usdcBorrowApy: parseApy(usdc?.variable_borrow_apy ?? usdc?.variableBorrowRate),
+    hbarxBorrowApy: parseValue(hbarx.variable_borrow_apy ?? hbarx.variableBorrowRate),
+    hbarxSupplyApy: parseValue(hbarx.supply_apy ?? hbarx.liquidityRate),
+    hbarxUtilization: parseValue(hbarx.utilization ?? hbarx.utilizationRate, ["display", "value"]),
+    hbarxAvailableLiquidity: parseValue(hbarx.available_liquidity ?? hbarx.availableLiquidity, ["usd_display", "usd_abbreviated"]),
+    whbarBorrowApy: parseValue(whbar?.variable_borrow_apy ?? whbar?.variableBorrowRate),
+    usdcBorrowApy: parseValue(usdc?.variable_borrow_apy ?? usdc?.variableBorrowRate),
   };
 }
 
@@ -116,8 +113,8 @@ export async function fetchHealthFactor(accountId: string): Promise<number | nul
   try {
     const res = await fetch(API.dashboard(accountId));
     if (!res.ok) return null;
-    const data = await res.json() as any;
-    return parseFloat(data.healthFactor ?? data.health_factor ?? "0");
+    const data = (await res.json()) as Record<string, unknown>;
+    return parseFloat(String(data.healthFactor ?? data.health_factor ?? "0"));
   } catch {
     return null;
   }

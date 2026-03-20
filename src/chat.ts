@@ -2,95 +2,69 @@
  * Interactive chat interface for the Bonzo Vault Keeper Agent.
  * Run: npm run chat
  *
- * Provides natural language interaction for:
- * - Checking current spread and rates
- * - Analyzing strategy profitability
- * - Executing strategy steps (borrow, unstake, deposit)
- * - Monitoring position health
+ * Routes natural language queries through the LangChain agent
+ * which has access to Hedera Agent Kit tools, Bonzo lending tools,
+ * and custom strategy analysis tools.
  */
 
 import * as readline from "readline";
-import { fetchMarketData, analyzeSpread } from "./strategy/spread.js";
-import { checkPosition, formatStatus } from "./strategy/monitor.js";
-
-const SYSTEM_PROMPT = `You are the Bonzo Vault Keeper Agent, an AI that helps users execute and manage a leveraged yield strategy on Hedera's Bonzo Finance protocol.
-
-The strategy:
-1. Supply collateral (USDC or HBAR) on Bonzo Lend
-2. Borrow HBARX at ~0.6% variable rate
-3. Unstake HBARX via Stader Labs → receive HBAR (1-day cooldown)
-4. Deposit HBAR + USDC into the dual-asset USDC-HBAR vault at ~60-90% APY
-5. Monitor health factor and rate spread — unwind if spread narrows
-
-You can help users:
-- Check current rates and spread profitability
-- Estimate returns for a given position size
-- Execute strategy steps
-- Monitor existing positions
-- Recommend entry/exit timing
-
-Always warn about risks: variable rates, liquidation, impermanent loss, 1-day unstaking cooldown.
-Never give financial advice — present data and let the user decide.`;
-
-async function handleCommand(input: string): Promise<string> {
-  const cmd = input.trim().toLowerCase();
-
-  if (cmd === "rates" || cmd === "spread" || cmd === "status") {
-    const market = await fetchMarketData();
-    const spread = analyzeSpread(market, 60); // TODO: live vault APY
-    return [
-      `HBARX Borrow Rate: ${market.hbarxBorrowApy}%`,
-      `Estimated Vault APY: 60% (placeholder)`,
-      `Net Spread: ${spread.netSpread.toFixed(1)}%`,
-      ``,
-      spread.recommendation,
-    ].join("\n");
-  }
-
-  if (cmd === "health") {
-    const status = await checkPosition("", 60);
-    return formatStatus(status);
-  }
-
-  if (cmd === "help") {
-    return [
-      "Available commands:",
-      "  rates / spread  — Show current rates and spread analysis",
-      "  health          — Check position health and alerts",
-      "  help            — Show this message",
-      "  quit            — Exit",
-      "",
-      "Or ask any question in natural language (LLM integration coming soon).",
-    ].join("\n");
-  }
-
-  // TODO: route to LangChain agent for natural language queries
-  return "Natural language processing coming soon. Try: rates, health, or help";
-}
+import { validateEnv } from "./config/env.js";
+import { createAgent } from "./agent/setup.js";
 
 async function main() {
+  validateEnv();
+
   console.log("Bonzo Vault Keeper Agent — Interactive Chat");
   console.log("============================================");
-  console.log('Type "help" for available commands, "quit" to exit.\n');
+  console.log("Initializing agent...\n");
+
+  const { agent, config: agentConfig } = await createAgent();
+
+  console.log(`Model: ${agentConfig.modelName}`);
+  console.log(`Tools loaded: ${agentConfig.toolCount}`);
+  console.log('Type "quit" to exit.\n');
 
   const rl = readline.createInterface({
     input: process.stdin,
     output: process.stdout,
   });
 
+  const conversationHistory: Array<{ role: string; content: string }> = [];
+
   const prompt = () => {
     rl.question("you> ", async (input) => {
-      if (input.trim().toLowerCase() === "quit") {
+      const trimmed = input.trim();
+      if (!trimmed) {
+        prompt();
+        return;
+      }
+
+      if (trimmed.toLowerCase() === "quit" || trimmed.toLowerCase() === "exit") {
         console.log("Goodbye.");
         rl.close();
         return;
       }
 
       try {
-        const response = await handleCommand(input);
-        console.log(`\nagent> ${response}\n`);
+        conversationHistory.push({ role: "user", content: trimmed });
+
+        const result = await agent.invoke(
+          { messages: conversationHistory.map(m => ({
+            role: m.role as "user" | "assistant",
+            content: m.content,
+          }))},
+        );
+
+        const lastMessage = result.messages[result.messages.length - 1];
+        const responseText = typeof lastMessage.content === "string"
+          ? lastMessage.content
+          : JSON.stringify(lastMessage.content);
+
+        conversationHistory.push({ role: "assistant", content: responseText });
+        console.log(`\nagent> ${responseText}\n`);
       } catch (err) {
-        console.error(`\nError: ${err instanceof Error ? err.message : err}\n`);
+        const msg = err instanceof Error ? err.message : String(err);
+        console.error(`\nError: ${msg}\n`);
       }
 
       prompt();
