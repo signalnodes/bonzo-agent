@@ -72,3 +72,10 @@ export const MAX_PROCESSED_TIMESTAMPS = 5000;
 // ---------------------------------------------------------------------------
 
 export const HBARX_DECIMALS = 8;
+
+// ---------------------------------------------------------------------------
+// Price estimates (used only for opportunity-cost calculations, not execution)
+// ---------------------------------------------------------------------------
+
+/** Approximate HBAR/USD rate for opportunity cost math. Not used for trade sizing. */
+export const HBAR_PRICE_USD_ESTIMATE = 0.093;

@@ -15,6 +15,8 @@ import {
   HEALTH_FACTOR_WARNING,
   DEFAULT_VAULT_APY,
   UNSTAKE_COOLDOWN_MS,
+  UTILIZATION_ENTRY_HARD,
+  BORROW_RATE_MAX,
 } from "../config/constants.js";
 import { getBestAPYEstimate } from "./vault-apy.js";
 
@@ -117,7 +119,7 @@ export async function evaluateEntry(config: StrategyConfig): Promise<{
   }
 
   // Utilization check — high utilization means borrow rates will climb
-  if (market.hbarxUtilization > 60) {
+  if (market.hbarxUtilization > UTILIZATION_ENTRY_HARD) {
     viable = false;
     reasons.push(
       `HBARX utilization is ${market.hbarxUtilization.toFixed(1)}% — borrow rates are likely to spike.`
@@ -133,10 +135,10 @@ export async function evaluateEntry(config: StrategyConfig): Promise<{
   }
 
   // Borrow rate sanity check
-  if (market.hbarxBorrowApy > 5) {
+  if (market.hbarxBorrowApy > BORROW_RATE_MAX) {
     viable = false;
     reasons.push(
-      `HBARX borrow rate (${market.hbarxBorrowApy.toFixed(2)}%) is above 5% — too expensive.`
+      `HBARX borrow rate (${market.hbarxBorrowApy.toFixed(2)}%) is above ${BORROW_RATE_MAX}% — too expensive.`
     );
   }
 

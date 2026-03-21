@@ -204,10 +204,13 @@ export async function pollHealth(config: MonitorConfig): Promise<HealthPollResul
   const zone = classifyHealthZone(healthFactor);
   const nextPollMs = getAdaptivePollInterval(zone);
 
-  // Both sources must show CRITICAL before firing auto-unwind
+  // Both sources must independently confirm CRITICAL before auto-unwind fires.
+  // If the API is unreachable (null), we do NOT treat that as confirmation —
+  // a network blip should never trigger an unwind on its own.
   const bothCritical =
     zone === "CRITICAL" &&
-    (apiHF === null || apiHF < HEALTH_FACTOR_CRITICAL_HARD);
+    apiHF !== null &&
+    apiHF < HEALTH_FACTOR_CRITICAL_HARD;
 
   const shouldAutoUnwind = config.autoUnwind && bothCritical;
 

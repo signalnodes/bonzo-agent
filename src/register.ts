@@ -46,7 +46,7 @@ async function register(): Promise<void> {
       AIAgentCapability.DATA_INTEGRATION,
     ])
     .setType("autonomous")
-    .setModel("claude-opus-4-6")
+    .setModel(process.env.AGENT_MODEL ?? "claude-haiku-4-5-20251001")
     .setCreator("Bonzo Vault Keeper Team")
     .setNetwork(env.hedera.network)
     .setExistingAccount(env.hedera.accountId, env.hedera.privateKey)

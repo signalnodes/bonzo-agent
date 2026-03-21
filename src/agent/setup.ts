@@ -558,7 +558,6 @@ function buildCustomTools(hederaClient: Client): DynamicStructuredTool[] {
       "Read-only: Get the current Bonzo Lend position for this account (collateral, debt, health factor, available borrows).",
     schema: z.object({}),
     func: async () => {
-      const provider = new ethers.JsonRpcProvider(HEDERA_JSON_RPC);
       const lp = new ethers.Contract(
         CONTRACTS.lend.lendingPool,
         ["function getUserAccountData(address) view returns (uint256,uint256,uint256,uint256,uint256,uint256)"],
