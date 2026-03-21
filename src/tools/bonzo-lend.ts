@@ -156,8 +156,9 @@ export function tokenDecimals(symbol: string): number {
 
 /**
  * Parse a human-readable amount to wei given a token symbol.
+ * Uses ethers.parseUnits for exact BigInt math (avoids float rounding).
  */
 export function toWei(amount: string | number, symbol: string): bigint {
   const decimals = tokenDecimals(symbol);
-  return BigInt(Math.round(Number(amount) * 10 ** decimals));
+  return ethers.parseUnits(String(amount), decimals);
 }

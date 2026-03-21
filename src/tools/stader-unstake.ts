@@ -16,8 +16,7 @@ import {
   ContractFunctionParameters,
   Hbar,
 } from "@hashgraph/sdk";
-import { API } from "../config/contracts.js";
-import { CONTRACTS } from "../config/contracts.js";
+import { API, CONTRACTS } from "../config/contracts.js";
 import { HBARX_DECIMALS, UNSTAKE_COOLDOWN_MS } from "../config/constants.js";
 
 export interface UnstakePreview {

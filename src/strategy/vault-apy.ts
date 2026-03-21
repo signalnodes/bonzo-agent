@@ -69,13 +69,26 @@ export async function fetchPricePerShare(
   return vault.getPricePerFullShare();
 }
 
+/** Minimum ms between recorded readings — prevents duplicate writes on rapid tool calls. */
+const MIN_READING_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
+
 /**
  * Record a new PPS reading and persist it.
+ * Skips the write if a reading for this vault already exists within the last 5 minutes,
+ * returning the most recent reading instead.
  */
 export async function recordPPSReading(
   vaultAddress: string = CONTRACTS.vaults.usdcHbar,
   provider?: ethers.Provider
 ): Promise<PPSReading> {
+  const history = loadHistory();
+  const vaultHistory = history.filter((r) => r.vaultAddress === vaultAddress);
+  const latest = vaultHistory[vaultHistory.length - 1];
+
+  if (latest && Date.now() - latest.timestamp < MIN_READING_INTERVAL_MS) {
+    return latest;
+  }
+
   const pps = await fetchPricePerShare(vaultAddress, provider);
   const reading: PPSReading = {
     timestamp: Date.now(),
@@ -83,7 +96,6 @@ export async function recordPPSReading(
     vaultAddress,
   };
 
-  const history = loadHistory();
   history.push(reading);
   saveHistory(history);
 

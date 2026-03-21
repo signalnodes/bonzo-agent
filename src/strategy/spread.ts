@@ -1,4 +1,5 @@
 import { API } from "../config/contracts.js";
+import { MIN_SPREAD_THRESHOLD, HBAR_PRICE_USD_ESTIMATE } from "../config/constants.js";
 
 export interface MarketData {
   hbarxBorrowApy: number;
@@ -77,7 +78,7 @@ export async function fetchMarketData(): Promise<MarketData> {
     hbarxAvailableLiquidity: parseValue(hbarx.available_liquidity ?? hbarx.availableLiquidity, ["usd_display", "usd_abbreviated"]),
     whbarBorrowApy: parseValue(whbar?.variable_borrow_apy ?? whbar?.variableBorrowRate),
     usdcBorrowApy: parseValue(usdc?.variable_borrow_apy ?? usdc?.variableBorrowRate),
-    hbarPriceUsd: hbarPriceUsd > 0 ? hbarPriceUsd : 0.09, // fallback if API missing
+    hbarPriceUsd: hbarPriceUsd > 0 ? hbarPriceUsd : HBAR_PRICE_USD_ESTIMATE,
   };
 }
 
@@ -87,7 +88,7 @@ export async function fetchMarketData(): Promise<MarketData> {
  */
 export function analyzeSpread(market: MarketData, vaultApy: number): SpreadAnalysis {
   const netSpread = vaultApy - market.hbarxBorrowApy;
-  const isPositive = netSpread > 5; // at least 5% spread to be worth the risk
+  const isPositive = netSpread > MIN_SPREAD_THRESHOLD;
 
   let recommendation: string;
   if (netSpread > 30) {
