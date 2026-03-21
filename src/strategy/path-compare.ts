@@ -40,7 +40,8 @@ export interface PathComparison {
  * Returns null if the call fails (e.g. no liquidity, RPC issue).
  */
 export async function getSaucerSwapQuote(
-  hbarxAmount: number
+  hbarxAmount: number,
+  spotRate?: number, // HBAR per HBARX from Stader oracle; if omitted falls back to a safe default
 ): Promise<{ hbarReceived: number; priceImpactPct: number } | null> {
   try {
     const provider = new ethers.JsonRpcProvider(HEDERA_JSON_RPC);
@@ -52,9 +53,9 @@ export async function getSaucerSwapQuote(
     const amounts: bigint[] = await router.getAmountsOut(amountIn, path);
     const hbarOut = Number(amounts[1]) / 1e8; // WHBAR also 8 decimals
 
-    // Estimate price impact vs spot rate (from Stader exchange rate as reference)
-    const spotRate = 1.37; // approximate HBARX→HBAR rate, updated by caller
-    const expectedWithoutSlippage = hbarxAmount * spotRate;
+    // Price impact = how much worse the swap is vs the Stader redemption rate
+    const rate = spotRate ?? 1.37;
+    const expectedWithoutSlippage = hbarxAmount * rate;
     const priceImpactPct = ((expectedWithoutSlippage - hbarOut) / expectedWithoutSlippage) * 100;
 
     return { hbarReceived: hbarOut, priceImpactPct };
@@ -92,7 +93,7 @@ export async function compareConversionPaths(
   };
 
   // --- Fast Mode (SaucerSwap) ---
-  const swapQuote = await getSaucerSwapQuote(hbarxAmount);
+  const swapQuote = await getSaucerSwapQuote(hbarxAmount, staderExchangeRate);
 
   let fastMode: ConversionQuote;
   if (swapQuote) {
