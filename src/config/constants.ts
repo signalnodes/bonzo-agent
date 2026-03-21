@@ -16,9 +16,22 @@ export const HEDERA_MIRROR_NODE = "https://mainnet.mirrornode.hedera.com";
 // Health factor thresholds
 // ---------------------------------------------------------------------------
 
+/** Below this: liquidation is imminent — auto-unwind fires */
+export const HEALTH_FACTOR_CRITICAL_HARD = 1.3;
+/** Below this: DANGER zone — 30s polling */
 export const HEALTH_FACTOR_CRITICAL = 1.5;
+/** Below this: WARN zone — 1min polling */
 export const HEALTH_FACTOR_WARNING = 2.0;
 export const HEALTH_FACTOR_TARGET = 2.5;
+
+// ---------------------------------------------------------------------------
+// Health monitor poll intervals
+// ---------------------------------------------------------------------------
+
+export const POLL_SAFE_MS     = 5 * 60 * 1000;   // 5 minutes
+export const POLL_WARN_MS     = 60 * 1000;         // 1 minute
+export const POLL_DANGER_MS   = 30 * 1000;         // 30 seconds
+export const POLL_CRITICAL_MS = 15 * 1000;         // 15 seconds
 
 // ---------------------------------------------------------------------------
 // Strategy thresholds

@@ -14,6 +14,7 @@ import crypto from "node:crypto";
 
 import { createAgent } from "./agent/setup.js";
 import { MonitorLoop, type Alert as MonitorAlert } from "./agent/monitor-loop.js";
+import { startHCS10Listener } from "./agent/hcs10.js";
 import { validateEnv } from "./config/env.js";
 import {
   MAX_ALERTS,
@@ -108,7 +109,8 @@ async function main(): Promise<void> {
   validateEnv();
 
   console.log("Initializing LangChain agent...");
-  const { agent } = await createAgent();
+  const agentResult = await createAgent();
+  const { agent } = agentResult;
   console.log("Agent ready.");
 
   const app = express();
@@ -236,6 +238,19 @@ async function main(): Promise<void> {
   });
 
   startMonitor();
+
+  // Start HCS-10 listener (requires prior `npm run register`)
+  try {
+    await startHCS10Listener(agentResult);
+    console.log("[HCS-10] Listener started.");
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (msg.includes("not registered")) {
+      console.warn("[HCS-10] Agent not registered — run `npm run register` to enable HCS-10. Skipping listener.");
+    } else {
+      console.warn("[HCS-10] Listener failed to start:", msg);
+    }
+  }
 }
 
 main().catch((err) => {

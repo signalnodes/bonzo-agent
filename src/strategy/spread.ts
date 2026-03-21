@@ -7,6 +7,8 @@ export interface MarketData {
   hbarxAvailableLiquidity: number;
   whbarBorrowApy: number;
   usdcBorrowApy: number;
+  /** HBAR/USD spot price from Bonzo oracle (used to convert getUserAccountData values to USD) */
+  hbarPriceUsd: number;
 }
 
 export interface SpreadAnalysis {
@@ -66,6 +68,8 @@ export async function fetchMarketData(): Promise<MarketData> {
     return 0;
   };
 
+  const hbarPriceUsd = parseValue(whbar?.price_usd_display ?? whbar?.priceUsdDisplay);
+
   return {
     hbarxBorrowApy: parseValue(hbarx.variable_borrow_apy ?? hbarx.variableBorrowRate),
     hbarxSupplyApy: parseValue(hbarx.supply_apy ?? hbarx.liquidityRate),
@@ -73,6 +77,7 @@ export async function fetchMarketData(): Promise<MarketData> {
     hbarxAvailableLiquidity: parseValue(hbarx.available_liquidity ?? hbarx.availableLiquidity, ["usd_display", "usd_abbreviated"]),
     whbarBorrowApy: parseValue(whbar?.variable_borrow_apy ?? whbar?.variableBorrowRate),
     usdcBorrowApy: parseValue(usdc?.variable_borrow_apy ?? usdc?.variableBorrowRate),
+    hbarPriceUsd: hbarPriceUsd > 0 ? hbarPriceUsd : 0.09, // fallback if API missing
   };
 }
 

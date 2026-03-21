@@ -15,9 +15,19 @@ export const CONTRACTS = {
     USDC: "0x000000000000000000000000000000000006f89a",
   },
 
-  // Hedera-native token IDs (for Hedera SDK calls vs EVM calls)
+  // Hedera-native token IDs (for HAK / SaucerSwap plugin calls)
   tokenIds: {
     HBARX: "0.0.834116",
+    WHBAR: "0.0.1456986",
+    USDC:  "0.0.456858",
+  },
+
+  // SaucerSwap V1 (Uniswap V2 fork on Hedera mainnet)
+  saucerswap: {
+    /** SaucerSwapV1RouterV3 — EVM address derived from 0.0.3045981 */
+    router: "0x00000000000000000000000000000000002E7A5D",
+    /** HBARX/WHBAR pair — 0.0.1084688 */
+    hbarxWhbarPair: "0x000000000000000000000000000000000010932C",
   },
 
   // Bonzo Lend aTokens (receipt tokens for supplied collateral)

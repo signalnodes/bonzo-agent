@@ -12,6 +12,7 @@
     "chat": "tsx src/chat.ts",
     "monitor": "tsx src/monitor.ts",
     "monitor:watch": "tsx src/monitor.ts --watch",
+    "monitor:health": "tsx src/monitor-loop.ts",
     "register": "tsx src/register.ts",
     "serve": "tsx src/server.ts"
   },
@@ -35,6 +36,7 @@
     "dotenv": "^17.3.1",
     "ethers": "^6.16.0",
     "express": "^5.2.1",
+    "hak-saucerswap-plugin": "^1.0.1",
     "hedera-agent-kit": "^3.8.1"
   }
 }

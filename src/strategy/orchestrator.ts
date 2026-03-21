@@ -309,32 +309,44 @@ export function formatStrategyStatus(
 
 /**
  * Return ordered, human-readable instructions that the agent should follow
- * (executing each via the appropriate Hedera Agent Kit tool) to enter the
- * leveraged yield strategy.
+ * to enter the leveraged yield strategy.
+ *
+ * mode "fast"     — swap HBARX → HBAR on SaucerSwap (instant, ~0.3% fee + slippage)
+ * mode "maxYield" — unstake HBARX via Stader (zero fee, 1-day cooldown)
  */
-export function getEntrySteps(config: StrategyConfig): string[] {
+export function getEntrySteps(
+  config: StrategyConfig,
+  mode: "fast" | "maxYield" = "maxYield",
+): string[] {
   const collateralAddr =
     config.collateralToken === "WHBAR"
       ? CONTRACTS.tokens.WHBAR
       : CONTRACTS.tokens.USDC;
 
-  return [
+  const sharedPrefix = [
     `1. Approve ${config.collateralAmount} ${config.collateralToken} (${collateralAddr}) for the Bonzo LendingPool (${CONTRACTS.lend.lendingPool}).`,
-
     `2. Supply ${config.collateralAmount} ${config.collateralToken} as collateral on Bonzo Lend via the LendingPool deposit function.`,
-
     `3. Borrow ${config.borrowAmountHbarx} HBARX (${CONTRACTS.tokens.HBARX}) at the variable rate from Bonzo Lend. Ensure health factor stays above ${config.healthFactorTarget}.`,
-
-    `4. Initiate HBARX unstake via Stader Labs to convert borrowed HBARX into HBAR. Note: 1-day cooldown applies.`,
-
-    `5. (After cooldown) Claim unstaked HBAR from Stader.`,
-
-    `6. Approve USDC (${CONTRACTS.tokens.USDC}) for the Bonzo Vault (${CONTRACTS.vaults.usdcHbar}).`,
-
-    `7. Call BonzoVaultConcLiq.deposit(_amount0, _amount1, _minShares) on the USDC-HBAR vault, sending HBAR as msg.value. Use previewDeposit() first to check proportions.`,
-
-    `8. Record vault share balance and begin monitoring health factor + spread.`,
   ];
+
+  const conversionSteps =
+    mode === "fast"
+      ? [
+          `4. [Fast Mode] Approve HBARX for the SaucerSwap router (${CONTRACTS.saucerswap.router}).`,
+          `5. [Fast Mode] Swap HBARX → WHBAR via execute_saucerswap_swap. Check price impact first with compare_conversion_paths. Proceed only if impact < 3%.`,
+        ]
+      : [
+          `4. [Max Yield Mode] Initiate HBARX unstake via Stader Labs (execute_hbarx_unstake). A 1-day cooldown applies.`,
+          `5. [Max Yield Mode] After cooldown, claim HBAR via execute_hbarx_withdraw.`,
+        ];
+
+  const sharedSuffix = [
+    `6. Approve USDC (${CONTRACTS.tokens.USDC}) for the Bonzo Vault (${CONTRACTS.vaults.usdcHbar}).`,
+    `7. Call vault_preview_deposit to check proportions, then execute_vault_deposit to enter the USDC-HBAR vault.`,
+    `8. Record vault share balance with get_vault_share_balance and begin monitoring health factor and spread.`,
+  ];
+
+  return [...sharedPrefix, ...conversionSteps, ...sharedSuffix];
 }
 
 /**

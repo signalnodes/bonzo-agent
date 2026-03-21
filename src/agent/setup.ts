@@ -14,9 +14,7 @@ import {
   HederaLangchainToolkit,
   type Configuration,
   AgentMode,
-  type Plugin,
 } from "hedera-agent-kit";
-import { bonzoPlugin } from "@bonzofinancelabs/hak-bonzo-plugin";
 import { env, validateEnv } from "../config/env.js";
 import { CONTRACTS } from "../config/contracts.js";
 import { HEDERA_JSON_RPC } from "../config/constants.js";
@@ -54,6 +52,15 @@ import {
   tokenAddress,
   toWei,
 } from "../tools/bonzo-lend.js";
+import {
+  pollHealth,
+  loadState,
+  classifyHealthZone,
+} from "../strategy/health-monitor.js";
+import {
+  compareConversionPaths,
+  getSaucerSwapQuote,
+} from "../strategy/path-compare.js";
 
 import { SYSTEM_PROMPT } from "./system-prompt.js";
 
@@ -171,18 +178,21 @@ function buildCustomTools(hederaClient: Client): DynamicStructuredTool[] {
 
   const entryStepsTool = new DynamicStructuredTool({
     name: "get_entry_steps",
-    description: "Get step-by-step instructions for entering the leveraged yield strategy.",
+    description:
+      "Get step-by-step instructions for entering the leveraged yield strategy. " +
+      "mode='fast' = SaucerSwap swap (instant). mode='maxYield' = Stader unstake (1-day cooldown).",
     schema: z.object({
       collateralToken: z.enum(["WHBAR", "USDC"]).default("WHBAR"),
       collateralAmount: z.string().default("1000"),
       borrowAmountHbarx: z.string().default("500"),
+      mode: z.enum(["fast", "maxYield"]).default("maxYield").describe("Conversion path to use"),
     }),
-    func: async ({ collateralToken, collateralAmount, borrowAmountHbarx }) => {
+    func: async ({ collateralToken, collateralAmount, borrowAmountHbarx, mode }) => {
       const config: StrategyConfig = {
         collateralToken, collateralAmount, borrowAmountHbarx,
         minSpread: 10, maxLeverage: 0.5, healthFactorTarget: 2.5,
       };
-      return getEntrySteps(config).join("\n\n");
+      return getEntrySteps(config, mode).join("\n\n");
     },
   });
 
@@ -554,16 +564,154 @@ function buildCustomTools(hederaClient: Client): DynamicStructuredTool[] {
         ["function getUserAccountData(address) view returns (uint256,uint256,uint256,uint256,uint256,uint256)"],
         provider
       );
-      const [collateral, debt, available, liqThreshold, ltv, hf] =
-        await lp.getUserAccountData(alias);
+      const [[collateral, debt, available, , ltv, hf], market] = await Promise.all([
+        lp.getUserAccountData(alias),
+        fetchMarketData(),
+      ]);
+      const hbarPrice = market.hbarPriceUsd;
+      const toUsd = (hbar: bigint) =>
+        `$${(parseFloat(ethers.formatEther(hbar)) * hbarPrice).toFixed(2)}`;
       return JSON.stringify({
         address: alias,
-        collateralETH: ethers.formatEther(collateral),
-        debtETH: ethers.formatEther(debt),
-        availableBorrowsETH: ethers.formatEther(available),
-        healthFactor: hf === ethers.MaxUint256 ? "∞" : ethers.formatEther(hf),
-        ltv: ltv.toString(),
+        collateralUSD: toUsd(collateral),
+        debtUSD: toUsd(debt),
+        availableBorrowsUSD: toUsd(available),
+        healthFactor: hf === ethers.MaxUint256 ? "∞" : parseFloat(ethers.formatEther(hf)).toFixed(4),
+        ltv: `${(Number(ltv) / 100).toFixed(2)}%`,
+        hbarPriceUsed: `$${hbarPrice.toFixed(4)}/HBAR`,
       });
+    },
+  });
+
+  const monitorHealthStatusTool = new DynamicStructuredTool({
+    name: "monitor_health_status",
+    description:
+      "Read-only: Poll health factor right now and return zone classification, on-chain position data, " +
+      "and persisted monitor state (last poll time, total polls, whether auto-unwind has fired). " +
+      "Use this to get an instant health check without starting the full background monitor.",
+    schema: z.object({}),
+    func: async () => {
+      const monitorConfig = {
+        alias,
+        accountId: env.hedera.accountId,
+        autoUnwind: false, // never fire auto-unwind from the chat tool
+        statePath: env.monitor.statePath,
+      };
+      const [pollResult, persistedState] = await Promise.all([
+        pollHealth(monitorConfig),
+        Promise.resolve(loadState(env.monitor.statePath)),
+      ]);
+      return JSON.stringify({
+        zone: pollResult.zone,
+        healthFactor: pollResult.healthFactor ?? "no open position",
+        collateralUSD: pollResult.position?.collateralUSD,
+        debtUSD: pollResult.position?.debtUSD,
+        dataSource: pollResult.position?.source ?? "none",
+        errors: pollResult.errors.length > 0 ? pollResult.errors : undefined,
+        recommendation:
+          pollResult.zone === "SAFE"     ? "Position is healthy. No action needed."
+          : pollResult.zone === "WARN"   ? "Health factor is below 2.0. Monitor closely."
+          : pollResult.zone === "DANGER" ? "Health factor below 1.5. Consider unwinding soon."
+          : "CRITICAL: Health factor below 1.3. Unwind immediately.",
+        monitor: {
+          lastPollAt: persistedState.lastPollAt,
+          pollCount: persistedState.pollCount,
+          autoUnwindFired: persistedState.autoUnwindFired,
+          autoUnwindAt: persistedState.autoUnwindAt,
+        },
+        nextPollMs: pollResult.nextPollMs,
+      }, null, 2);
+    },
+  });
+
+  // --- SaucerSwap router ABI for swap execution ---
+  const SWAP_ROUTER_ABI = [
+    "function swapExactTokensForTokens(uint amountIn, uint amountOutMin, address[] path, address to, uint deadline) returns (uint[] amounts)",
+    "function getAmountsOut(uint amountIn, address[] path) view returns (uint[] amounts)",
+  ];
+
+  const comparePathsTool = new DynamicStructuredTool({
+    name: "compare_conversion_paths",
+    description:
+      "Compare Fast Mode (SaucerSwap instant swap) vs Max Yield Mode (Stader 1-day unstake) " +
+      "for converting a given HBARX amount to HBAR. Returns expected HBAR received, fees, slippage, " +
+      "opportunity cost of waiting, and a recommendation.",
+    schema: z.object({
+      hbarxAmount: z.number().describe("Amount of HBARX to convert"),
+      vaultApyPct: z.number().optional().describe("Current vault APY % for opportunity cost calc (defaults to 70)"),
+    }),
+    func: async ({ hbarxAmount, vaultApyPct }) => {
+      // Get live Stader exchange rate
+      const rate = await getExchangeRate(hederaClient);
+      const apy = vaultApyPct ?? 70;
+      const result = await compareConversionPaths(hbarxAmount, rate, apy);
+      return JSON.stringify({
+        recommendation: result.recommendation,
+        rationale: result.rationale,
+        opportunityCostNote: result.opportunityCostNote,
+        fastMode: {
+          hbarReceived: result.fastMode.hbarReceived.toFixed(4),
+          effectiveRate: result.fastMode.effectiveRate.toFixed(6),
+          feesAndSlippagePct: result.fastMode.feesAndSlippagePct.toFixed(2) + "%",
+          executionDelay: result.fastMode.executionDelay,
+          notes: result.fastMode.notes,
+        },
+        maxYieldMode: {
+          hbarReceived: result.maxYield.hbarReceived.toFixed(4),
+          effectiveRate: result.maxYield.effectiveRate.toFixed(6),
+          feesAndSlippagePct: "0% (no swap fee)",
+          executionDelay: result.maxYield.executionDelay,
+          notes: result.maxYield.notes,
+        },
+        staderExchangeRate: rate.toFixed(6),
+      }, null, 2);
+    },
+  });
+
+  const saucerSwapSwapTool = new DynamicStructuredTool({
+    name: "execute_saucerswap_swap",
+    description:
+      "EXECUTE: Swap HBARX → WHBAR (wrapped HBAR) on SaucerSwap V1 using the on-chain router. " +
+      "This is the Fast Mode path — instant, no cooldown, but incurs ~0.3% swap fee and slippage. " +
+      "Requires prior HBARX approval of the SaucerSwap router. Always call compare_conversion_paths first. " +
+      "Always confirm with user before executing.",
+    schema: z.object({
+      hbarxAmountIn: z.string().describe("HBARX amount in smallest units (8 decimals, e.g. '100000000' = 1 HBARX)"),
+      minHbarOut: z.string().describe("Minimum WHBAR out in smallest units (slippage protection, e.g. '90000000' for 0.9 HBAR)"),
+      slippageTolerancePct: z.number().default(1).describe("Slippage tolerance % used to compute minHbarOut if you want the tool to calculate it"),
+    }),
+    func: async ({ hbarxAmountIn, minHbarOut, slippageTolerancePct }) => {
+      const signer = new ethers.Wallet(env.hedera.privateKey, provider);
+      const router = new ethers.Contract(CONTRACTS.saucerswap.router, SWAP_ROUTER_ABI, signer);
+      const path = [CONTRACTS.tokens.HBARX, CONTRACTS.tokens.WHBAR];
+      const deadline = Math.floor(Date.now() / 1000) + 300; // 5 min
+
+      // If caller passed 0 for minHbarOut, compute from quote with slippage tolerance
+      let minOut = BigInt(minHbarOut);
+      if (minOut === 0n) {
+        const amounts: bigint[] = await router.getAmountsOut(BigInt(hbarxAmountIn), path);
+        const expected = amounts[1];
+        minOut = expected * BigInt(Math.floor((100 - slippageTolerancePct) * 100)) / 10000n;
+      }
+
+      const tx = await router.swapExactTokensForTokens(
+        BigInt(hbarxAmountIn),
+        minOut,
+        path,
+        signer.address,
+        deadline,
+      );
+      const receipt = await tx.wait();
+      return JSON.stringify({
+        executed: true,
+        operation: "saucerswap_swap_hbarx_to_whbar",
+        hbarxIn: hbarxAmountIn,
+        minHbarOut: minOut.toString(),
+        transactionHash: receipt?.hash,
+        blockNumber: receipt?.blockNumber,
+        status: receipt?.status === 1 ? "SUCCESS" : "FAILED",
+        nextStep: "WHBAR is now in your wallet. You can unwrap it or deposit directly into the vault.",
+      }, null, 2);
     },
   });
 
@@ -595,6 +743,11 @@ function buildCustomTools(hederaClient: Client): DynamicStructuredTool[] {
     bonzoRepayTool,
     bonzoWithdrawTool,
     bonzoPositionTool,
+    // Health monitoring
+    monitorHealthStatusTool,
+    // Path comparison + Fast Mode swap
+    comparePathsTool,
+    saucerSwapSwapTool,
   ];
 }
 
@@ -673,7 +826,7 @@ export async function createAgent(): Promise<AgentResult> {
   const client = createHederaClient();
 
   const configuration: Configuration = {
-    plugins: [bonzoPlugin as Plugin],
+    plugins: [],
     context: {
       accountId: env.hedera.accountId,
       mode: AgentMode.AUTONOMOUS,

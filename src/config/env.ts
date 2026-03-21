@@ -15,6 +15,10 @@ export const env = {
   hol: {
     apiKey: process.env.HOL_API_KEY ?? "",
   },
+  monitor: {
+    autoUnwind: process.env.MONITOR_AUTO_UNWIND === "true",
+    statePath: process.env.MONITOR_STATE_PATH ?? ".health-monitor-state.json",
+  },
 } as const;
 
 export function validateEnv(): void {
