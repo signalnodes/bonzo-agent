@@ -6,3 +6,7 @@ dist/
 .DS_Store
 .agent-state.json
 .vault-pps-history.json
+*.Zone.Identifier
+*.md.Zone.Identifier
+saucerwarp.md
+apex transcript*.md
