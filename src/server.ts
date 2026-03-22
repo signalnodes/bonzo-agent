@@ -15,7 +15,10 @@ import crypto from "node:crypto";
 import { createAgent } from "./agent/setup.js";
 import { MonitorLoop, type Alert as MonitorAlert } from "./agent/monitor-loop.js";
 import { startHCS10Listener } from "./agent/hcs10.js";
+import { fetchMarketData } from "./strategy/spread.js";
+import { getBestAPYEstimate } from "./strategy/vault-apy.js";
 import { validateEnv } from "./config/env.js";
+import { loadState } from "./agent/state.js";
 import {
   MAX_ALERTS,
   MAX_SESSION_HISTORY,
@@ -108,10 +111,42 @@ function startMonitor(): void {
 async function main(): Promise<void> {
   validateEnv();
 
+  // Print a startup banner with live market data so it's immediately clear
+  // the agent is connected to Hedera mainnet.
+  console.log("━".repeat(52));
+  console.log("  Bonzo Vault Keeper  ·  Hedera Mainnet");
+  console.log("━".repeat(52));
+  try {
+    const [market, liveApy] = await Promise.allSettled([
+      fetchMarketData(),
+      getBestAPYEstimate(),
+    ]);
+    if (market.status === "fulfilled") {
+      const m = market.value;
+      const vaultApy = liveApy.status === "fulfilled" && liveApy.value !== null
+        ? liveApy.value
+        : 70;
+      const netSpread = (vaultApy - m.hbarxBorrowApy).toFixed(1);
+      const viable = parseFloat(netSpread) > 5;
+      const apyLabel = liveApy.status === "fulfilled" && liveApy.value !== null
+        ? `${vaultApy.toFixed(1)}% (live)`
+        : `${vaultApy.toFixed(1)}% (estimate)`;
+      console.log(`  HBARX Borrow Rate : ${m.hbarxBorrowApy.toFixed(3)}%`);
+      console.log(`  HBAR Price        : $${m.hbarPriceUsd.toFixed(4)}`);
+      console.log(`  Vault APY         : ${apyLabel}`);
+      console.log(`  Net Spread        : ${netSpread}%  (${viable ? "✓ viable" : "✗ not viable"})`);
+      console.log(`  HBARX Utilization : ${m.hbarxUtilization.toFixed(1)}%`);
+    }
+  } catch {
+    console.log("  Market data unavailable — check connectivity");
+  }
+  console.log("━".repeat(52));
+  console.log("");
+
   console.log("Initializing LangChain agent...");
   const agentResult = await createAgent();
   const { agent } = agentResult;
-  console.log("Agent ready.");
+  console.log(`Agent ready (${agentResult.config.toolCount} tools · ${agentResult.config.modelName}).`);
 
   const app = express();
   app.use(express.json());
@@ -175,11 +210,86 @@ async function main(): Promise<void> {
   });
 
   // -----------------------------------------------------------------------
+  // POST /api/chat/stream  — SSE streaming version
+  // -----------------------------------------------------------------------
+  app.post("/api/chat/stream", async (req: Request, res: Response): Promise<void> => {
+    const { message, sessionId: clientSessionId } = req.body as {
+      message?: string;
+      sessionId?: string;
+    };
+
+    if (!message || typeof message !== "string") {
+      res.status(400).json({ error: "message is required" });
+      return;
+    }
+
+    const sessionId = clientSessionId ?? getSessionId(req);
+    if (!sessions.has(sessionId)) {
+      sessions.set(sessionId, []);
+    }
+    const history = sessions.get(sessionId)!;
+    history.push({ role: "user", content: message });
+
+    res.writeHead(200, {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache",
+      "Connection": "keep-alive",
+    });
+
+    const send = (event: string, data: unknown) => {
+      res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+    };
+
+    const langchainMessages = history.map((m) => ({
+      role: m.role,
+      content: m.content,
+    }));
+
+    let fullResponse = "";
+
+    try {
+      const stream = agent.streamEvents({ messages: langchainMessages }, { version: "v2" });
+
+      for await (const event of stream) {
+        if (event.event === "on_tool_start") {
+          send("tool_start", { tool: event.name });
+        } else if (event.event === "on_chat_model_stream") {
+          const chunk = event.data?.chunk;
+          const token =
+            typeof chunk?.content === "string"
+              ? chunk.content
+              : Array.isArray(chunk?.content)
+              ? chunk.content.map((c: { text?: string }) => c.text ?? "").join("")
+              : "";
+          if (token) {
+            fullResponse += token;
+            send("token", { token });
+          }
+        }
+      }
+
+      history.push({ role: "assistant", content: fullResponse });
+      if (history.length > MAX_SESSION_HISTORY) {
+        history.splice(0, history.length - SESSION_HISTORY_TRIM_TO);
+      }
+
+      send("done", { sessionId });
+    } catch (err) {
+      console.error("Stream error:", err);
+      send("error", { message: err instanceof Error ? err.message : String(err) });
+    } finally {
+      res.end();
+    }
+  });
+
+  // -----------------------------------------------------------------------
   // GET /api/status
   // -----------------------------------------------------------------------
-  app.get("/api/status", (_req: Request, res: Response): void => {
+  app.get("/api/status", async (_req: Request, res: Response): Promise<void> => {
     const s = monitor?.getStatus();
-    const market = s?.latestMarket;
+    // Fall back to the shared cache (warm from startup banner) if the monitor
+    // hasn't completed its first tick yet — avoids all-dashes on first page load.
+    const market = s?.latestMarket ?? await fetchMarketData().catch(() => null);
 
     res.json({
       monitor: {
@@ -195,17 +305,59 @@ async function main(): Promise<void> {
             hbarxAvailableLiquidity: market.hbarxAvailableLiquidity,
             whbarBorrowApy: market.whbarBorrowApy,
             usdcBorrowApy: market.usdcBorrowApy,
+            hbarPriceUsd: market.hbarPriceUsd,
+            hbarxPriceUsd: market.hbarxPriceUsd,
+            hbarxHbarRate: market.hbarxPriceUsd > 0 && market.hbarPriceUsd > 0
+              ? market.hbarxPriceUsd / market.hbarPriceUsd
+              : null,
           }
         : null,
       vault: {
         apy: s?.latestVaultApy ?? null,
       },
       spread: s?.latestSpread != null
-        ? { netSpread: s.latestSpread }
+        ? {
+            netSpread: s.latestSpread,
+            hbarxBorrowRate: market?.hbarxBorrowApy ?? null,
+            vaultApy: s.latestVaultApy ?? null,
+          }
         : null,
+      position: {
+        healthFactor: s?.latestHealthFactor ?? null,
+      },
+      hcs10: (() => {
+        const st = loadState();
+        return st.inboundTopicId
+          ? { inboundTopicId: st.inboundTopicId, outboundTopicId: st.outboundTopicId ?? null, registered: true }
+          : { registered: false };
+      })(),
       alerts: recentAlerts.slice(-10),
       updatedAt: new Date().toISOString(),
     });
+  });
+
+  // -----------------------------------------------------------------------
+  // GET /api/health  — connectivity + liveness probe
+  // -----------------------------------------------------------------------
+  app.get("/api/health", async (_req: Request, res: Response): Promise<void> => {
+    try {
+      const market = await fetchMarketData();
+      res.json({
+        status: "ok",
+        bonzoApi: true,
+        monitorRunning: monitor?.getStatus().running ?? false,
+        hbarxBorrowApy: market.hbarxBorrowApy,
+        hbarxUtilization: market.hbarxUtilization,
+        timestamp: new Date().toISOString(),
+      });
+    } catch (err) {
+      res.status(503).json({
+        status: "degraded",
+        bonzoApi: false,
+        error: err instanceof Error ? err.message : String(err),
+        timestamp: new Date().toISOString(),
+      });
+    }
   });
 
   // -----------------------------------------------------------------------

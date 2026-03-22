@@ -4,22 +4,29 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>Bonzo Vault Keeper</title>
+<script src="https://cdn.jsdelivr.net/npm/marked@9/marked.min.js"></script>
 <style>
   *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 
   :root {
-    --bg: #0f1729;
-    --chat-bg: #1a2332;
-    --user-msg: #2563eb;
-    --agent-msg: #1e293b;
+    --bg: #080e1c;
+    --surface: #0f172a;
+    --surface2: #1a2332;
+    --user-msg: #1d4ed8;
+    --agent-msg: #131f30;
     --accent: #22d3ee;
-    --alert-bg: #78350f;
-    --alert-border: #f59e0b;
+    --accent-dim: rgba(34,211,238,0.12);
+    --green: #4ade80;
+    --yellow: #fbbf24;
+    --red: #f87171;
     --text: #e2e8f0;
-    --text-dim: #94a3b8;
-    --border: #334155;
-    --input-bg: #0f172a;
-    --radius: 12px;
+    --text-dim: #64748b;
+    --text-muted: #94a3b8;
+    --border: #1e2d40;
+    --border-bright: #2a3f57;
+    --input-bg: #060d19;
+    --radius: 14px;
+    --radius-sm: 8px;
   }
 
   html,body {
@@ -30,286 +37,441 @@
     overflow: hidden;
   }
 
-  /* Layout */
+  /* ── Layout ── */
   #app {
     display: flex;
     flex-direction: column;
     height: 100dvh;
-    max-width: 900px;
+    max-width: 960px;
     margin: 0 auto;
+    border-left: 1px solid var(--border);
+    border-right: 1px solid var(--border);
   }
 
-  /* Header */
+  /* ── Header ── */
   header {
-    padding: 16px 20px 12px;
-    text-align: center;
+    padding: 14px 22px 12px;
     border-bottom: 1px solid var(--border);
     flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    background: linear-gradient(180deg, rgba(34,211,238,0.04) 0%, transparent 100%);
   }
+  .header-left { display: flex; align-items: center; gap: 10px; }
   header h1 {
-    font-size: 1.4rem;
+    font-size: 1.2rem;
     font-weight: 700;
     color: var(--accent);
-    letter-spacing: 0.5px;
+    letter-spacing: 0.3px;
   }
   header p {
-    font-size: 0.8rem;
+    font-size: 0.72rem;
     color: var(--text-dim);
-    margin-top: 2px;
+    margin-top: 1px;
+  }
+  .network-badge {
+    font-size: 0.65rem;
+    font-weight: 600;
+    letter-spacing: 0.6px;
+    text-transform: uppercase;
+    background: rgba(74,222,128,0.1);
+    color: var(--green);
+    border: 1px solid rgba(74,222,128,0.2);
+    border-radius: 20px;
+    padding: 2px 8px;
+  }
+  .live-indicator {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 0.68rem;
+    font-weight: 600;
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+    color: var(--text-dim);
+  }
+  .hcs10-badge {
+    display: none;
+    align-items: center;
+    gap: 5px;
+    font-size: 0.65rem;
+    font-weight: 600;
+    letter-spacing: 0.4px;
+    background: rgba(34,211,238,0.07);
+    color: var(--accent);
+    border: 1px solid rgba(34,211,238,0.18);
+    border-radius: 20px;
+    padding: 2px 9px;
+    cursor: pointer;
+    transition: background 0.2s;
+  }
+  .hcs10-badge.visible { display: flex; }
+  .hcs10-badge:hover { background: rgba(34,211,238,0.14); }
+  .hcs10-badge-dot {
+    width: 5px; height: 5px;
+    border-radius: 50%;
+    background: var(--accent);
+  }
+  .live-dot {
+    width: 7px; height: 7px;
+    border-radius: 50%;
+    background: var(--text-dim);
+    transition: background 0.4s;
+  }
+  .live-dot.active {
+    background: var(--green);
+    box-shadow: 0 0 6px var(--green);
+    animation: pulse 2s infinite;
+  }
+  @keyframes pulse {
+    0%,100% { opacity: 1; }
+    50% { opacity: 0.45; }
   }
 
-  /* Status bar */
-  #status-bar {
-    display: flex;
-    gap: 16px;
-    padding: 8px 20px;
-    font-size: 0.75rem;
-    color: var(--text-dim);
+  /* ── Metrics strip ── */
+  #metrics {
+    display: grid;
+    grid-template-columns: repeat(6, 1fr);
+    gap: 0;
     border-bottom: 1px solid var(--border);
-    overflow-x: auto;
-    white-space: nowrap;
     flex-shrink: 0;
   }
-  .stat-item { display: flex; gap: 4px; align-items: center; }
-  .stat-label { color: var(--text-dim); }
-  .stat-value { color: var(--accent); font-weight: 600; }
-  .stat-value.negative { color: #f87171; }
-  .stat-value.positive { color: #4ade80; }
+  .metric {
+    padding: 10px 14px;
+    border-right: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+  }
+  .metric:last-child { border-right: none; }
+  .metric-label {
+    font-size: 0.63rem;
+    font-weight: 600;
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+    color: var(--text-dim);
+  }
+  .metric-value {
+    font-size: 1rem;
+    font-weight: 700;
+    color: var(--accent);
+    line-height: 1.2;
+    transition: color 0.4s;
+  }
+  .metric-value.green { color: var(--green); }
+  .metric-value.yellow { color: var(--yellow); }
+  .metric-value.red { color: var(--red); }
+  .metric-value.dim { color: var(--text-muted); }
 
-  /* Alerts banner */
+  /* ── Alerts banner ── */
   #alerts-banner {
     flex-shrink: 0;
-    max-height: 120px;
+    max-height: 110px;
     overflow-y: auto;
   }
   .alert-item {
     display: flex;
     align-items: flex-start;
     gap: 8px;
-    padding: 8px 20px;
-    font-size: 0.78rem;
-    border-bottom: 1px solid rgba(245,158,11,0.2);
-    animation: fadeIn 0.3s ease;
+    padding: 7px 22px;
+    font-size: 0.77rem;
+    border-bottom: 1px solid rgba(255,255,255,0.04);
+    animation: slideIn 0.25s ease;
   }
   .alert-item.warning {
-    background: rgba(245,158,11,0.08);
-    border-left: 3px solid var(--alert-border);
+    background: rgba(251,191,36,0.06);
+    border-left: 3px solid var(--yellow);
   }
   .alert-item.critical {
-    background: rgba(239,68,68,0.1);
-    border-left: 3px solid #ef4444;
+    background: rgba(248,113,113,0.08);
+    border-left: 3px solid var(--red);
   }
   .alert-item.info {
-    background: rgba(34,211,238,0.06);
+    background: rgba(34,211,238,0.05);
     border-left: 3px solid var(--accent);
   }
-  .alert-time { color: var(--text-dim); font-size: 0.7rem; flex-shrink: 0; }
-  .alert-msg { color: var(--text); }
+  .alert-icon { font-size: 0.9rem; flex-shrink: 0; margin-top: 1px; }
+  .alert-time { color: var(--text-dim); font-size: 0.68rem; flex-shrink: 0; padding-top: 2px; }
+  .alert-body { flex: 1; color: var(--text); }
+  .alert-body strong { color: inherit; }
   .alert-dismiss {
     margin-left: auto;
     background: none;
     border: none;
     color: var(--text-dim);
     cursor: pointer;
-    font-size: 1rem;
+    font-size: 1.1rem;
     line-height: 1;
-    padding: 0 4px;
+    padding: 0 2px;
     flex-shrink: 0;
+    opacity: 0.6;
+    transition: opacity 0.15s;
+  }
+  .alert-dismiss:hover { opacity: 1; }
+  @keyframes slideIn {
+    from { opacity: 0; transform: translateY(-4px); }
+    to { opacity: 1; transform: translateY(0); }
   }
 
-  /* Chat area */
+  /* ── Chat area ── */
   #chat-area {
     flex: 1;
     overflow-y: auto;
-    padding: 16px 20px;
+    padding: 18px 22px;
     display: flex;
     flex-direction: column;
-    gap: 12px;
+    gap: 14px;
     scroll-behavior: smooth;
   }
 
   .message {
-    max-width: 80%;
-    padding: 10px 14px;
+    max-width: 82%;
+    padding: 11px 15px;
     border-radius: var(--radius);
-    font-size: 0.9rem;
-    line-height: 1.55;
+    font-size: 0.885rem;
+    line-height: 1.6;
     word-wrap: break-word;
-    animation: fadeIn 0.25s ease;
+    animation: msgIn 0.2s ease;
+  }
+  @keyframes msgIn {
+    from { opacity: 0; transform: translateY(8px); }
+    to { opacity: 1; transform: translateY(0); }
   }
   .message.user {
     align-self: flex-end;
     background: var(--user-msg);
     color: #fff;
     border-bottom-right-radius: 4px;
+    box-shadow: 0 2px 12px rgba(29,78,216,0.3);
   }
   .message.agent {
     align-self: flex-start;
     background: var(--agent-msg);
     color: var(--text);
     border-bottom-left-radius: 4px;
+    border: 1px solid var(--border);
   }
 
-  /* Markdown inside agent messages */
+  /* Markdown in agent messages */
   .message.agent strong { color: var(--accent); font-weight: 600; }
   .message.agent em { font-style: italic; color: #cbd5e1; }
+  .message.agent a { color: var(--accent); text-decoration: none; }
+  .message.agent a:hover { text-decoration: underline; }
   .message.agent code {
-    background: rgba(0,0,0,0.3);
+    background: rgba(0,0,0,0.4);
     padding: 1px 5px;
     border-radius: 4px;
     font-family: 'Fira Code', 'Consolas', monospace;
     font-size: 0.82em;
+    color: #93c5fd;
   }
   .message.agent pre {
-    background: rgba(0,0,0,0.35);
-    padding: 10px 12px;
-    border-radius: 8px;
+    background: rgba(0,0,0,0.4);
+    padding: 10px 13px;
+    border-radius: var(--radius-sm);
     overflow-x: auto;
-    margin: 6px 0;
+    margin: 8px 0;
+    border: 1px solid var(--border);
+  }
+  .message.agent pre code { background: none; padding: 0; font-size: 0.83em; }
+  .message.agent ul, .message.agent ol { margin: 6px 0 6px 18px; }
+  .message.agent li { margin: 3px 0; }
+  .message.agent p { margin: 5px 0; }
+  .message.agent h3 { font-size: 0.92rem; color: var(--accent); margin: 8px 0 4px; }
+  .message.agent table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 8px 0;
     font-size: 0.82em;
   }
-  .message.agent pre code {
-    background: none;
-    padding: 0;
+  .message.agent th {
+    text-align: left;
+    padding: 4px 8px;
+    border-bottom: 1px solid var(--border-bright);
+    color: var(--text-muted);
+    font-weight: 600;
   }
-  .message.agent ul, .message.agent ol {
-    margin: 4px 0 4px 18px;
+  .message.agent td {
+    padding: 4px 8px;
+    border-bottom: 1px solid var(--border);
   }
-  .message.agent li { margin: 2px 0; }
-  .message.agent p { margin: 4px 0; }
 
   /* Typing indicator */
   .typing {
     align-self: flex-start;
     display: flex;
     gap: 5px;
-    padding: 12px 18px;
+    align-items: center;
+    padding: 12px 16px;
     background: var(--agent-msg);
     border-radius: var(--radius);
     border-bottom-left-radius: 4px;
+    border: 1px solid var(--border);
   }
   .typing span {
-    width: 8px; height: 8px;
+    width: 7px; height: 7px;
     background: var(--text-dim);
     border-radius: 50%;
-    animation: bounce 1.4s infinite ease-in-out;
+    animation: bounce 1.3s infinite ease-in-out;
   }
-  .typing span:nth-child(2) { animation-delay: 0.16s; }
-  .typing span:nth-child(3) { animation-delay: 0.32s; }
-
+  .typing span:nth-child(2) { animation-delay: 0.15s; }
+  .typing span:nth-child(3) { animation-delay: 0.30s; }
+  .typing-label {
+    font-size: 0.75rem;
+    color: var(--text-dim);
+    margin-left: 6px;
+    font-style: italic;
+  }
   @keyframes bounce {
-    0%,80%,100% { transform: scale(0.6); opacity: 0.4; }
-    40% { transform: scale(1); opacity: 1; }
+    0%,80%,100% { transform: translateY(0); opacity: 0.35; }
+    40% { transform: translateY(-5px); opacity: 1; }
   }
-  @keyframes fadeIn {
-    from { opacity: 0; transform: translateY(6px); }
-    to { opacity: 1; transform: translateY(0); }
+  .message.agent.streaming::after {
+    content: '▋';
+    display: inline-block;
+    color: var(--accent);
+    animation: blink 0.8s step-end infinite;
+    margin-left: 1px;
+  }
+  @keyframes blink {
+    0%,100% { opacity: 1; } 50% { opacity: 0; }
   }
 
-  /* Input area */
+  /* ── Input area ── */
   #input-area {
     display: flex;
-    gap: 8px;
-    padding: 12px 20px 16px;
+    gap: 10px;
+    padding: 12px 22px 16px;
     border-top: 1px solid var(--border);
     background: var(--bg);
     flex-shrink: 0;
   }
   #msg-input {
     flex: 1;
-    padding: 10px 14px;
-    border-radius: 8px;
-    border: 1px solid var(--border);
+    padding: 10px 15px;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border-bright);
     background: var(--input-bg);
     color: var(--text);
     font-size: 0.9rem;
     outline: none;
-    transition: border-color 0.2s;
+    transition: border-color 0.2s, box-shadow 0.2s;
   }
-  #msg-input:focus { border-color: var(--accent); }
+  #msg-input:focus {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px rgba(34,211,238,0.08);
+  }
   #msg-input::placeholder { color: var(--text-dim); }
 
   #send-btn {
-    padding: 10px 20px;
-    border-radius: 8px;
+    padding: 10px 18px;
+    border-radius: var(--radius-sm);
     border: none;
     background: var(--user-msg);
     color: #fff;
-    font-size: 0.9rem;
+    font-size: 0.88rem;
     font-weight: 600;
     cursor: pointer;
-    transition: background 0.2s, transform 0.1s;
+    transition: background 0.2s, box-shadow 0.2s, transform 0.1s;
+    display: flex;
+    align-items: center;
+    gap: 6px;
     white-space: nowrap;
   }
-  #send-btn:hover { background: #3b82f6; }
-  #send-btn:active { transform: scale(0.97); }
-  #send-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+  #send-btn:hover { background: #2563eb; box-shadow: 0 2px 10px rgba(29,78,216,0.4); }
+  #send-btn:active { transform: scale(0.96); }
+  #send-btn:disabled { opacity: 0.45; cursor: not-allowed; box-shadow: none; transform: none; }
+  #send-btn svg { width: 14px; height: 14px; }
 
-  /* Scrollbar */
-  ::-webkit-scrollbar { width: 6px; }
+  /* ── Scrollbar ── */
+  ::-webkit-scrollbar { width: 5px; }
   ::-webkit-scrollbar-track { background: transparent; }
-  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+  ::-webkit-scrollbar-thumb { background: var(--border-bright); border-radius: 3px; }
 
-  /* Quick action chips */
+  /* ── Quick action chips ── */
   #quick-actions {
     display: flex;
     flex-wrap: wrap;
-    gap: 8px;
-    padding: 4px 0 8px;
+    gap: 7px;
+    padding: 8px 0 2px;
   }
   .chip {
-    padding: 6px 14px;
+    padding: 5px 12px;
     border-radius: 20px;
-    border: 1px solid var(--border);
-    background: transparent;
+    border: 1px solid var(--border-bright);
+    background: rgba(34,211,238,0.04);
     color: var(--accent);
-    font-size: 0.78rem;
+    font-size: 0.76rem;
     cursor: pointer;
     transition: background 0.2s, border-color 0.2s;
     white-space: nowrap;
   }
   .chip:hover {
-    background: rgba(34,211,238,0.1);
+    background: var(--accent-dim);
     border-color: var(--accent);
   }
 
-  /* Mobile */
-  @media (max-width: 640px) {
-    #app { max-width: 100%; }
-    .message { max-width: 90%; }
-    header h1 { font-size: 1.15rem; }
-    #status-bar { gap: 10px; padding: 6px 12px; font-size: 0.7rem; }
+  /* ── Mobile ── */
+  @media (max-width: 680px) {
+    #app { max-width: 100%; border: none; }
+    .message { max-width: 92%; }
+    header h1 { font-size: 1.05rem; }
+    #metrics { grid-template-columns: repeat(3, 1fr); }
+    .metric { padding: 8px 10px; }
+    .metric-value { font-size: 0.9rem; }
     #input-area { padding: 8px 12px 12px; }
+    #chat-area { padding: 14px 12px; }
+    header { padding: 10px 12px; }
   }
 </style>
 </head>
 <body>
 <div id="app">
   <header>
-    <h1>Bonzo Vault Keeper</h1>
-    <p>AI-Powered DeFi Strategy Agent on Hedera</p>
+    <div class="header-left">
+      <div>
+        <h1>Bonzo Vault Keeper</h1>
+        <p>AI-Powered Leveraged Yield Agent on Hedera</p>
+      </div>
+      <span class="network-badge">Mainnet</span>
+    </div>
+    <div style="display:flex;align-items:center;gap:10px;">
+      <span class="hcs10-badge" id="hcs10-badge" title="Click to copy inbound topic ID">
+        <span class="hcs10-badge-dot"></span>
+        <span id="hcs10-label">HCS-10</span>
+      </span>
+      <div class="live-indicator">
+        <div class="live-dot" id="live-dot"></div>
+        <span id="live-label">Offline</span>
+      </div>
+    </div>
   </header>
 
-  <div id="status-bar">
-    <div class="stat-item">
-      <span class="stat-label">HBARX Borrow:</span>
-      <span class="stat-value" id="st-borrow">--</span>
+  <div id="metrics">
+    <div class="metric">
+      <span class="metric-label">HBARX Borrow</span>
+      <span class="metric-value dim" id="m-borrow">—</span>
     </div>
-    <div class="stat-item">
-      <span class="stat-label">Vault APY:</span>
-      <span class="stat-value positive" id="st-vault">--</span>
+    <div class="metric">
+      <span class="metric-label">Vault APY</span>
+      <span class="metric-value green" id="m-vault">—</span>
     </div>
-    <div class="stat-item">
-      <span class="stat-label">Net Spread:</span>
-      <span class="stat-value" id="st-spread">--</span>
+    <div class="metric">
+      <span class="metric-label">Net Spread</span>
+      <span class="metric-value dim" id="m-spread">—</span>
     </div>
-    <div class="stat-item">
-      <span class="stat-label">Utilization:</span>
-      <span class="stat-value" id="st-util">--</span>
+    <div class="metric">
+      <span class="metric-label">Health Factor</span>
+      <span class="metric-value dim" id="m-hf">—</span>
     </div>
-    <div class="stat-item">
-      <span class="stat-label">Strategy:</span>
-      <span class="stat-value" id="st-viable">--</span>
+    <div class="metric">
+      <span class="metric-label">Utilization</span>
+      <span class="metric-value dim" id="m-util">—</span>
+    </div>
+    <div class="metric">
+      <span class="metric-label">Strategy</span>
+      <span class="metric-value dim" id="m-viable">—</span>
     </div>
   </div>
 
@@ -317,21 +479,27 @@
 
   <div id="chat-area">
     <div class="message agent">
-      Welcome! I'm the <strong>Bonzo Vault Keeper</strong> agent. I can help you execute and monitor the leveraged HBARX yield strategy on Hedera.
+      <strong>Bonzo Vault Keeper</strong> online. I execute and monitor a leveraged yield strategy on Hedera: borrow HBARX cheaply on Bonzo Lend, route it through SaucerSwap or Stader, and deploy into the USDC-HBAR vault (~60–90% APY).<br><br>
+      Try one of these to get started, or ask me anything:
       <div id="quick-actions">
-        <button class="chip" data-msg="What's the current spread?">Current Spread</button>
+        <button class="chip" data-msg="What's the current spread and is strategy viable?">Current Spread</button>
         <button class="chip" data-msg="Is now a good time to enter the strategy?">Entry Viability</button>
         <button class="chip" data-msg="What's the vault APY?">Vault APY</button>
         <button class="chip" data-msg="Show my lending position and health factor">My Position</button>
-        <button class="chip" data-msg="Walk me through the full strategy steps">Strategy Steps</button>
-        <button class="chip" data-msg="What are the current market conditions?">Market Data</button>
+        <button class="chip" data-msg="Compare SaucerSwap vs Stader path for 500 HBARX">Compare Paths</button>
+        <button class="chip" data-msg="Walk me through the full strategy entry steps">Strategy Steps</button>
       </div>
     </div>
   </div>
 
   <div id="input-area">
-    <input type="text" id="msg-input" placeholder="Ask about the HBARX spread strategy..." autocomplete="off" />
-    <button id="send-btn">Send</button>
+    <input type="text" id="msg-input" placeholder="Ask about the strategy, market conditions, or your position…" autocomplete="off" />
+    <button id="send-btn">
+      Send
+      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M2 8h12M9 3l5 5-5 5"/>
+      </svg>
+    </button>
   </div>
 </div>
 
@@ -348,52 +516,44 @@
   const input = document.getElementById('msg-input');
   const sendBtn = document.getElementById('send-btn');
   const alertsBanner = document.getElementById('alerts-banner');
+  const liveDot = document.getElementById('live-dot');
+  const liveLabel = document.getElementById('live-label');
 
   let isWaiting = false;
+  let agentReady = false;
 
-  // ---------- Markdown renderer (simple) ----------
+  // Show "Starting…" on all metrics while waiting for first status fetch
+  document.querySelectorAll('.metric-value').forEach(el => {
+    el.textContent = '…';
+    el.className = 'metric-value dim';
+  });
+  liveLabel.textContent = 'Connecting…';
+
+  // Poll /api/health until agent is ready, then unlock the input
+  sendBtn.disabled = true;
+  input.placeholder = 'Waiting for agent to initialize…';
+  (async function waitForAgent() {
+    for (let attempt = 0; attempt < 60; attempt++) {
+      try {
+        const r = await fetch('/api/health');
+        if (r.ok) {
+          agentReady = true;
+          sendBtn.disabled = false;
+          input.placeholder = 'Ask about the strategy, market conditions, or your position…';
+          input.focus();
+          return;
+        }
+      } catch {}
+      await new Promise(r => setTimeout(r, 3000));
+    }
+    // Give up after 3 min — server may be misconfigured
+    input.placeholder = 'Server unreachable. Check that npm run serve is running.';
+  })();
+
+  // ---------- Markdown renderer (marked.js) ----------
+  marked.setOptions({ breaks: true, gfm: true });
   function renderMarkdown(text) {
-    // Escape HTML
-    let html = text
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;');
-
-    // Code blocks (``` ... ```)
-    html = html.replace(/```(\w*)\n?([\s\S]*?)```/g, function(_, lang, code) {
-      return '<pre><code>' + code.trim() + '</code></pre>';
-    });
-
-    // Inline code
-    html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
-
-    // Bold
-    html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
-
-    // Italic
-    html = html.replace(/\*(.+?)\*/g, '<em>$1</em>');
-
-    // Unordered lists
-    html = html.replace(/^[\-\*] (.+)$/gm, '<li>$1</li>');
-    html = html.replace(/((?:<li>.*<\/li>\n?)+)/g, '<ul>$1</ul>');
-
-    // Ordered lists
-    html = html.replace(/^\d+\. (.+)$/gm, '<li>$1</li>');
-    // Wrap consecutive <li> not already in <ul>
-    html = html.replace(/(?<!<\/ul>)((?:<li>.*<\/li>\n?)+)/g, function(match) {
-      if (match.includes('<ul>')) return match;
-      return '<ol>' + match + '</ol>';
-    });
-
-    // Paragraphs / line breaks
-    html = html.replace(/\n{2,}/g, '</p><p>');
-    html = html.replace(/\n/g, '<br>');
-    html = '<p>' + html + '</p>';
-
-    // Clean empty paragraphs
-    html = html.replace(/<p>\s*<\/p>/g, '');
-
-    return html;
+    return marked.parse(text);
   }
 
   // ---------- Chat ----------
@@ -409,13 +569,42 @@
     scrollToBottom();
   }
 
-  function showTyping() {
+  const TOOL_LABELS = {
+    analyze_spread: 'Fetching market data',
+    bonzo_get_position: 'Checking your position',
+    compare_conversion_paths: 'Comparing paths',
+    get_hbarx_exchange_rate: 'Fetching HBARX rate',
+    check_position: 'Checking position',
+    monitor_health_status: 'Polling health factor',
+    bonzo_deposit: 'Preparing deposit',
+    bonzo_borrow: 'Preparing borrow',
+    saucerswap_quote: 'Getting swap quote',
+    saucerswap_swap: 'Executing swap',
+    evaluate_entry: 'Evaluating entry',
+  };
+
+  function showTyping(label) {
     const div = document.createElement('div');
     div.className = 'typing';
     div.id = 'typing-indicator';
-    div.innerHTML = '<span></span><span></span><span></span>';
+    const text = label || '';
+    div.innerHTML =
+      '<span></span><span></span><span></span>' +
+      (text ? '<span class="typing-label">' + text + '…</span>' : '');
     chatArea.appendChild(div);
     scrollToBottom();
+  }
+
+  function updateTyping(label) {
+    const el = document.getElementById('typing-indicator');
+    if (!el) return;
+    let labelEl = el.querySelector('.typing-label');
+    if (!labelEl) {
+      labelEl = document.createElement('span');
+      labelEl.className = 'typing-label';
+      el.appendChild(labelEl);
+    }
+    labelEl.textContent = (label || '') + '…';
   }
 
   function hideTyping() {
@@ -424,42 +613,93 @@
   }
 
   function scrollToBottom() {
-    requestAnimationFrame(() => {
-      chatArea.scrollTop = chatArea.scrollHeight;
-    });
+    requestAnimationFrame(() => { chatArea.scrollTop = chatArea.scrollHeight; });
   }
 
   async function sendMessage() {
     const text = input.value.trim();
-    if (!text || isWaiting) return;
+    if (!text || isWaiting || !agentReady) return;
 
     appendMessage('user', text);
     input.value = '';
     isWaiting = true;
     sendBtn.disabled = true;
-    showTyping();
+    showTyping('Thinking');
+
+    // Streaming bubble — built up token by token
+    let streamDiv = null;
+    let accumulated = '';
 
     try {
-      const res = await fetch('/api/chat', {
+      const res = await fetch('/api/chat/stream', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ message: text, sessionId }),
       });
-      const data = await res.json();
-      hideTyping();
 
-      if (data.error) {
-        appendMessage('agent', 'Error: ' + (data.detail || data.error));
-      } else {
-        appendMessage('agent', data.response);
-        if (data.sessionId) {
-          sessionId = data.sessionId;
-          localStorage.setItem('bonzo_session', sessionId);
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+
+        // Parse SSE frames
+        const frames = buffer.split('\n\n');
+        buffer = frames.pop() ?? '';
+
+        for (const frame of frames) {
+          const lines = frame.split('\n');
+          let eventType = 'message';
+          let dataStr = '';
+          for (const line of lines) {
+            if (line.startsWith('event: ')) eventType = line.slice(7).trim();
+            if (line.startsWith('data: ')) dataStr = line.slice(6).trim();
+          }
+          if (!dataStr) continue;
+
+          let payload;
+          try { payload = JSON.parse(dataStr); } catch { continue; }
+
+          if (eventType === 'tool_start') {
+            const label = TOOL_LABELS[payload.tool] || payload.tool;
+            if (!streamDiv) {
+              updateTyping(label);
+            }
+          } else if (eventType === 'token') {
+            if (!streamDiv) {
+              hideTyping();
+              streamDiv = document.createElement('div');
+              streamDiv.className = 'message agent streaming';
+              chatArea.appendChild(streamDiv);
+            }
+            accumulated += payload.token;
+            streamDiv.innerHTML = renderMarkdown(accumulated);
+            scrollToBottom();
+          } else if (eventType === 'done') {
+            if (payload.sessionId) {
+              sessionId = payload.sessionId;
+              localStorage.setItem('bonzo_session', sessionId);
+            }
+            if (streamDiv) streamDiv.classList.remove('streaming');
+          } else if (eventType === 'error') {
+            hideTyping();
+            appendMessage('agent', 'Error: ' + payload.message);
+          }
         }
       }
-    } catch (err) {
+
+      // Fallback: if no tokens arrived (pure tool response), treat buffer
+      if (!streamDiv && accumulated === '') {
+        hideTyping();
+        appendMessage('agent', 'No response received — try again.');
+      }
+    } catch {
       hideTyping();
-      appendMessage('agent', 'Connection error. Please try again.');
+      if (streamDiv) streamDiv.remove();
+      appendMessage('agent', 'Connection error — please try again.');
     } finally {
       isWaiting = false;
       sendBtn.disabled = false;
@@ -469,13 +709,36 @@
 
   sendBtn.addEventListener('click', sendMessage);
   input.addEventListener('keydown', function(e) {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      sendMessage();
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
+  });
+
+  // ---------- Metrics ----------
+  function setMetric(id, value, colorClass) {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.textContent = value;
+    el.className = 'metric-value ' + (colorClass || 'dim');
+  }
+
+  function hfColor(hf) {
+    if (hf >= 2.0) return 'green';
+    if (hf >= 1.5) return 'yellow';
+    return 'red';
+  }
+
+  const hcs10Badge = document.getElementById('hcs10-badge');
+  const hcs10Label = document.getElementById('hcs10-label');
+  let hcs10InboundTopicId = null;
+  hcs10Badge.addEventListener('click', () => {
+    if (hcs10InboundTopicId) {
+      navigator.clipboard.writeText(hcs10InboundTopicId).then(() => {
+        const prev = hcs10Label.textContent;
+        hcs10Label.textContent = 'Copied!';
+        setTimeout(() => { hcs10Label.textContent = prev; }, 1500);
+      });
     }
   });
 
-  // ---------- Status bar ----------
   async function fetchStatus() {
     try {
       const res = await fetch('/api/status');
@@ -483,31 +746,47 @@
       const m = data.market;
       const s = data.spread || {};
       const v = data.vault || {};
+      const p = data.position || {};
+      const mon = data.monitor || {};
+
+      // HCS-10 registration badge
+      if (data.hcs10 && data.hcs10.registered && data.hcs10.inboundTopicId) {
+        hcs10InboundTopicId = data.hcs10.inboundTopicId;
+        hcs10Label.textContent = 'HCS-10 · ' + data.hcs10.inboundTopicId;
+        hcs10Badge.classList.add('visible');
+        hcs10Badge.title = 'Inbound topic: ' + data.hcs10.inboundTopicId + ' (click to copy)';
+      }
 
       if (m) {
-        document.getElementById('st-borrow').textContent = m.hbarxBorrowApy != null ? m.hbarxBorrowApy.toFixed(2) + '%' : '--';
-        document.getElementById('st-util').textContent = m.hbarxUtilization != null ? m.hbarxUtilization.toFixed(1) + '%' : '--';
+        setMetric('m-borrow', m.hbarxBorrowApy != null ? m.hbarxBorrowApy.toFixed(2) + '%' : '—', 'dim');
+        setMetric('m-util',   m.hbarxUtilization != null ? m.hbarxUtilization.toFixed(1) + '%' : '—',
+          m.hbarxUtilization > 50 ? 'yellow' : m.hbarxUtilization > 40 ? 'dim' : 'green');
       }
 
-      document.getElementById('st-vault').textContent = v.apy != null ? v.apy.toFixed(1) + '%' : '--';
+      if (v.apy != null) {
+        setMetric('m-vault', v.apy.toFixed(1) + '%', 'green');
+      } else {
+        setMetric('m-vault', '~70% est.', 'yellow');
+      }
 
-      const spreadEl = document.getElementById('st-spread');
       if (s.netSpread != null) {
-        spreadEl.textContent = s.netSpread.toFixed(1) + '%';
-        spreadEl.className = 'stat-value ' + (s.netSpread > 0 ? 'positive' : 'negative');
+        setMetric('m-spread', s.netSpread.toFixed(1) + '%',
+          s.netSpread > 10 ? 'green' : s.netSpread > 5 ? 'yellow' : 'red');
+        const viable = s.netSpread > 5;
+        setMetric('m-viable', viable ? 'Viable' : 'Not Viable', viable ? 'green' : 'red');
       }
 
-      const viableEl = document.getElementById('st-viable');
-      if (s.netSpread != null) {
-        const viable = s.netSpread > 0;
-        viableEl.textContent = viable ? 'Viable' : 'Not Viable';
-        viableEl.className = 'stat-value ' + (viable ? 'positive' : 'negative');
+      if (p.healthFactor != null) {
+        const hf = p.healthFactor;
+        setMetric('m-hf', hf.toFixed(2), hfColor(hf));
+      } else {
+        setMetric('m-hf', 'No position', 'dim');
       }
 
-      // Show monitor pulse
-      if (data.monitor && data.monitor.running) {
-        viableEl.title = 'Monitor running — ' + (data.monitor.checkCount || 0) + ' checks';
-      }
+      // Live indicator
+      const running = mon.running;
+      liveDot.className = 'live-dot' + (running ? ' active' : '');
+      liveLabel.textContent = running ? 'Live' : 'Offline';
     } catch {
       // silent
     }
@@ -519,43 +798,36 @@
   // ---------- SSE Alerts ----------
   function connectAlerts() {
     const evtSource = new EventSource('/api/alerts');
-
     evtSource.onmessage = function(event) {
-      try {
-        const alert = JSON.parse(event.data);
-        addAlertBanner(alert);
-      } catch {}
+      try { addAlertBanner(JSON.parse(event.data)); } catch {}
     };
-
     evtSource.onerror = function() {
       evtSource.close();
-      // Reconnect after 5s
       setTimeout(connectAlerts, 5000);
     };
   }
+
+  const ALERT_ICONS = { critical: '🔴', warning: '⚠️', info: 'ℹ️' };
 
   function addAlertBanner(alert) {
     const div = document.createElement('div');
     div.className = 'alert-item ' + (alert.level || 'warning');
 
-    const time = new Date(alert.timestamp).toLocaleTimeString();
-
+    const time = new Date(alert.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    const icon = ALERT_ICONS[alert.level] || '⚠️';
     const titleHtml = alert.title ? '<strong>' + escapeHtml(alert.title) + ':</strong> ' : '';
+
     div.innerHTML =
+      '<span class="alert-icon">' + icon + '</span>' +
       '<span class="alert-time">' + time + '</span>' +
-      '<span class="alert-msg">' + titleHtml + escapeHtml(alert.message) + '</span>' +
+      '<span class="alert-body">' + titleHtml + escapeHtml(alert.message) + '</span>' +
       '<button class="alert-dismiss" title="Dismiss">&times;</button>';
 
-    div.querySelector('.alert-dismiss').addEventListener('click', function() {
-      div.remove();
-    });
-
+    div.querySelector('.alert-dismiss').addEventListener('click', function() { div.remove(); });
     alertsBanner.appendChild(div);
 
     // Keep max 5 visible
-    while (alertsBanner.children.length > 5) {
-      alertsBanner.removeChild(alertsBanner.firstChild);
-    }
+    while (alertsBanner.children.length > 5) alertsBanner.removeChild(alertsBanner.firstChild);
   }
 
   function escapeHtml(text) {
@@ -572,13 +844,11 @@
       if (isWaiting) return;
       input.value = btn.getAttribute('data-msg');
       sendMessage();
-      // Remove chips after first use
       const qa = document.getElementById('quick-actions');
       if (qa) qa.remove();
     });
   });
 
-  // Focus input on load
   input.focus();
 })();
 </script>
