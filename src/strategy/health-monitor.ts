@@ -7,7 +7,7 @@
  * Poll intervals adapt to health zone:
  *   SAFE     (HF >= 2.0): every 5 minutes
  *   WARN     (HF >= 1.5): every 1 minute
- *   DANGER   (HF >= 1.3): every 30 seconds
+ *   DANGER   (HF >= 1.3): every 30 seconds — auto-unwind fires if enabled
  *   CRITICAL (HF <  1.3): every 15 seconds — auto-unwind fires if enabled
  */
 
@@ -24,7 +24,7 @@ import {
   POLL_DANGER_MS,
   POLL_CRITICAL_MS,
 } from "../config/constants.js";
-import { fetchHealthFactor } from "./spread.js";
+import { fetchHealthFactor, fetchMarketData } from "./spread.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -90,15 +90,22 @@ export async function fetchOnChainPosition(alias: string): Promise<OnChainPositi
     const lp = new ethers.Contract(CONTRACTS.lend.lendingPool, LP_ABI, provider);
     const [collateral, debt, available, , , hf] = await lp.getUserAccountData(alias);
 
+    // Bonzo on Hedera: getUserAccountData values are HBAR-denominated (1e18),
+    // NOT USD. Multiply by hbarPriceUsd to get USD values.
+    const market = await fetchMarketData().catch(() => null);
+    const hbarPrice = market?.hbarPriceUsd ?? 0;
+    const toUsd = (v: bigint) =>
+      `$${(parseFloat(ethers.formatEther(v)) * hbarPrice).toFixed(2)}`;
+
     const healthFactor =
       hf === ethers.MaxUint256
         ? Infinity
         : parseFloat(ethers.formatEther(hf as bigint));
 
     return {
-      collateralUSD: `$${parseFloat(ethers.formatEther(collateral as bigint)).toFixed(2)}`,
-      debtUSD: `$${parseFloat(ethers.formatEther(debt as bigint)).toFixed(2)}`,
-      availableBorrowsUSD: `$${parseFloat(ethers.formatEther(available as bigint)).toFixed(2)}`,
+      collateralUSD: toUsd(collateral as bigint),
+      debtUSD: toUsd(debt as bigint),
+      availableBorrowsUSD: toUsd(available as bigint),
       healthFactor,
       source: "on-chain",
     };
@@ -204,15 +211,17 @@ export async function pollHealth(config: MonitorConfig): Promise<HealthPollResul
   const zone = classifyHealthZone(healthFactor);
   const nextPollMs = getAdaptivePollInterval(zone);
 
-  // Both sources must independently confirm CRITICAL before auto-unwind fires.
+  // Both sources must independently confirm DANGER or CRITICAL before auto-unwind fires.
+  // Firing at HF < 1.5 (DANGER) gives a meaningful buffer above liquidation (1.0),
+  // and is especially important given the 1-day Stader cooldown when unwinding.
   // If the API is unreachable (null), we do NOT treat that as confirmation —
   // a network blip should never trigger an unwind on its own.
-  const bothCritical =
-    zone === "CRITICAL" &&
+  const bothDangerOrWorse =
+    (zone === "DANGER" || zone === "CRITICAL") &&
     apiHF !== null &&
-    apiHF < HEALTH_FACTOR_CRITICAL_HARD;
+    apiHF < HEALTH_FACTOR_CRITICAL; // 1.5
 
-  const shouldAutoUnwind = config.autoUnwind && bothCritical;
+  const shouldAutoUnwind = config.autoUnwind && bothDangerOrWorse;
 
   return {
     timestamp,
@@ -342,6 +351,9 @@ export async function startMonitorLoop(
       continue;
     }
 
+    // Capture previous zone before overwriting
+    const previousZone = state.lastZone;
+
     // Update state
     state.lastPollAt = result.timestamp;
     state.pollCount++;
@@ -371,12 +383,12 @@ export async function startMonitorLoop(
     });
 
     // Log zone changes
-    if (state.lastZone !== null && state.lastZone !== result.zone) {
+    if (previousZone !== null && previousZone !== result.zone) {
       emitLog({
         ts: result.timestamp,
         level: logLevel,
         event: "zone_change",
-        data: { from: state.lastZone, to: result.zone, hf: result.healthFactor },
+        data: { from: previousZone, to: result.zone, hf: result.healthFactor },
       });
     }
 

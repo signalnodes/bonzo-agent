@@ -122,6 +122,9 @@ function buildCustomTools(hederaClient: Client): DynamicStructuredTool[] {
     schema: z.object({}),
     func: async () => {
       const market = await fetchMarketData();
+      const hbarxHbarRate = market.hbarxPriceUsd > 0 && market.hbarPriceUsd > 0
+        ? (market.hbarxPriceUsd / market.hbarPriceUsd).toFixed(6)
+        : "unavailable";
       return JSON.stringify({
         hbarxBorrowApy: `${market.hbarxBorrowApy.toFixed(3)}%`,
         hbarxSupplyApy: `${market.hbarxSupplyApy.toFixed(3)}%`,
@@ -129,6 +132,9 @@ function buildCustomTools(hederaClient: Client): DynamicStructuredTool[] {
         hbarxAvailableLiquidity: `$${market.hbarxAvailableLiquidity.toLocaleString()}`,
         whbarBorrowApy: `${market.whbarBorrowApy.toFixed(3)}%`,
         usdcBorrowApy: `${market.usdcBorrowApy.toFixed(3)}%`,
+        hbarPriceUsd: `$${market.hbarPriceUsd.toFixed(4)}`,
+        hbarxPriceUsd: `$${market.hbarxPriceUsd.toFixed(4)}`,
+        hbarxHbarExchangeRate: hbarxHbarRate,
       }, null, 2);
     },
   });
@@ -369,7 +375,7 @@ function buildCustomTools(hederaClient: Client): DynamicStructuredTool[] {
     schema: z.object({
       usdcAmount: z.string().describe("USDC amount in smallest units (6 decimals)"),
       hbarAmount: z.string().describe("HBAR amount in smallest units (8 decimals)"),
-      minShares: z.string().default("0").describe("Minimum shares to accept (slippage protection)"),
+      minShares: z.string().default("0").describe("Minimum shares to accept (slippage protection). Use the 'expectedShares' value from vault_preview_deposit, reduced by 1-2% for slippage tolerance. Never leave at 0 for real deposits."),
       hbarValue: z.string().describe("Native HBAR to send as msg.value (in wei/tinybars)"),
       vaultAddress: z.string().default(USDC_HBAR_VAULT),
     }),
@@ -420,15 +426,17 @@ function buildCustomTools(hederaClient: Client): DynamicStructuredTool[] {
   const vaultShareBalanceTool = new DynamicStructuredTool({
     name: "get_vault_share_balance",
     description:
-      "Check a user's vault share balance for the Bonzo USDC-HBAR vault.",
+      "Check vault share balance for the Bonzo USDC-HBAR vault. " +
+      "Defaults to the agent's own EVM alias — omit userAddress to check this account's balance.",
     schema: z.object({
-      userAddress: z.string().describe("EVM address of the user to check"),
+      userAddress: z.string().optional().describe("EVM address to check (defaults to this agent's alias)"),
       vaultAddress: z.string().default(USDC_HBAR_VAULT),
     }),
     func: async ({ userAddress, vaultAddress }) => {
-      const balance = await getShareBalance(provider, vaultAddress, userAddress);
+      const address = userAddress ?? alias;
+      const balance = await getShareBalance(provider, vaultAddress, address);
       return JSON.stringify({
-        userAddress,
+        userAddress: address,
         vaultAddress,
         shareBalance: balance.toString(),
       }, null, 2);
@@ -563,21 +571,21 @@ function buildCustomTools(hederaClient: Client): DynamicStructuredTool[] {
         ["function getUserAccountData(address) view returns (uint256,uint256,uint256,uint256,uint256,uint256)"],
         provider
       );
-      const [[collateral, debt, available, , ltv, hf], market] = await Promise.all([
-        lp.getUserAccountData(alias),
-        fetchMarketData(),
-      ]);
-      const hbarPrice = market.hbarPriceUsd;
-      const toUsd = (hbar: bigint) =>
-        `$${(parseFloat(ethers.formatEther(hbar)) * hbarPrice).toFixed(2)}`;
+      // getUserAccountData on Bonzo (Aave v2 fork on Hedera) returns values in HBAR
+      // with 1e18 precision — NOT USD. The oracle base asset is HBAR, not ETH.
+      // Must multiply by hbarPriceUsd to get USD values.
+      const [collateral, debt, available, , ltv, hf] = await lp.getUserAccountData(alias);
+      const market = await fetchMarketData().catch(() => null);
+      const hbarPrice = market?.hbarPriceUsd ?? 0;
+      const fmtUsd = (v: bigint) =>
+        `$${(parseFloat(ethers.formatEther(v)) * hbarPrice).toFixed(2)}`;
       return JSON.stringify({
         address: alias,
-        collateralUSD: toUsd(collateral),
-        debtUSD: toUsd(debt),
-        availableBorrowsUSD: toUsd(available),
+        collateralUSD: fmtUsd(collateral),
+        debtUSD: fmtUsd(debt),
+        availableBorrowsUSD: fmtUsd(available),
         healthFactor: hf === ethers.MaxUint256 ? "∞" : parseFloat(ethers.formatEther(hf)).toFixed(4),
         ltv: `${(Number(ltv) / 100).toFixed(2)}%`,
-        hbarPriceUsed: `$${hbarPrice.toFixed(4)}/HBAR`,
       });
     },
   });
@@ -640,10 +648,13 @@ function buildCustomTools(hederaClient: Client): DynamicStructuredTool[] {
       vaultApyPct: z.number().optional().describe("Current vault APY % for opportunity cost calc (defaults to 70)"),
     }),
     func: async ({ hbarxAmount, vaultApyPct }) => {
-      // Get live Stader exchange rate
-      const rate = await getExchangeRate(hederaClient);
+      // Get live Stader exchange rate and HBAR price in parallel
+      const [rate, market] = await Promise.all([
+        getExchangeRate(hederaClient),
+        fetchMarketData(),
+      ]);
       const apy = vaultApyPct ?? 70;
-      const result = await compareConversionPaths(hbarxAmount, rate, apy);
+      const result = await compareConversionPaths(hbarxAmount, rate, apy, market.hbarPriceUsd);
       return JSON.stringify({
         recommendation: result.recommendation,
         rationale: result.rationale,
@@ -787,7 +798,7 @@ function createHederaClient(): Client {
  */
 function createLLM(): { llm: BaseChatModel; modelName: string } {
   if (env.anthropic.apiKey) {
-    const model = process.env.AGENT_MODEL ?? "claude-haiku-4-5-20251001";
+    const model = process.env.AGENT_MODEL ?? "claude-sonnet-4-6";
     console.log(`Using Anthropic Claude (${model})`);
     return {
       llm: new ChatAnthropic({
