@@ -104,21 +104,25 @@ export async function recordPPSReading(
 
 /**
  * Compute APY between two PPS readings.
+ * Returns null if the window is too short or the result is implausible.
  */
-function computeAPY(older: PPSReading, newer: PPSReading): number {
+function computeAPY(older: PPSReading, newer: PPSReading): number | null {
   const oldPPS = BigInt(older.pricePerShare);
   const newPPS = BigInt(newer.pricePerShare);
 
-  if (oldPPS === 0n) return 0;
+  if (oldPPS === 0n) return null;
 
   const msBetween = newer.timestamp - older.timestamp;
   const daysBetween = msBetween / (24 * 60 * 60 * 1000);
 
-  if (daysBetween < 0.001) return 0; // too close together
+  // Require at least 1 hour — short windows amplify noise into absurd APYs
+  if (daysBetween < 1 / 24) return null;
 
-  // Use floating point for the APY calculation
   const ratio = Number(newPPS) / Number(oldPPS);
   const apy = (Math.pow(ratio, 365 / daysBetween) - 1) * 100;
+
+  // Sanity cap — ConcLiq vault PPS fluctuates with price; reject garbage values
+  if (!isFinite(apy) || apy > 500 || apy < -99) return null;
 
   return apy;
 }
@@ -185,10 +189,10 @@ export async function getVaultAPY(
 
   return {
     currentPPS: current.pricePerShare,
-    apy: oldest ? computeAPY(oldest, current) : null,
-    apy24h: reading24h ? computeAPY(reading24h, current) : null,
-    apy7d: reading7d ? computeAPY(reading7d, current) : null,
-    apy30d: reading30d ? computeAPY(reading30d, current) : null,
+    apy: oldest ? (computeAPY(oldest, current) ?? null) : null,
+    apy24h: reading24h ? (computeAPY(reading24h, current) ?? null) : null,
+    apy7d: reading7d ? (computeAPY(reading7d, current) ?? null) : null,
+    apy30d: reading30d ? (computeAPY(reading30d, current) ?? null) : null,
     readingCount: history.length,
     oldestReading: oldest ? new Date(oldest.timestamp).toISOString() : null,
     newestReading: new Date(current.timestamp).toISOString(),
