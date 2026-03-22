@@ -1,0 +1,40 @@
+# Bonzo Vault Keeper — standalone Docker Compose
+#
+# VPS deployment: /opt/bonzo-agent/
+#   .env              — secrets (never commit)
+#   deploy/           — this file
+#
+# First-time setup:
+#   1. Place .env at /opt/bonzo-agent/.env (see .env.example)
+#   2. Build:   docker compose -f deploy/docker-compose.yml build
+#   3. Register (if not already done locally):
+#      docker compose -f deploy/docker-compose.yml run --rm bonzo-agent node dist/register.js
+#   4. Start:   docker compose -f deploy/docker-compose.yml up -d
+#
+# Access (SSH tunnel — port is NOT publicly exposed):
+#   ssh -L 3001:localhost:3001 user@<vps-ip>
+#   then open http://localhost:3001
+
+services:
+  bonzo-agent:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    image: bonzo-agent:latest
+    container_name: bonzo-agent
+    restart: unless-stopped
+    # Bind to localhost only — access via SSH tunnel.
+    # The chat API executes real mainnet transactions; never expose publicly.
+    ports:
+      - "127.0.0.1:3001:3000"
+    env_file:
+      - ../.env
+    environment:
+      # Route both state files into the persistent volume
+      - AGENT_STATE_PATH=/app/data/.agent-state.json
+      - MONITOR_STATE_PATH=/app/data/.health-monitor-state.json
+    volumes:
+      - bonzo-data:/app/data
+
+volumes:
+  bonzo-data:

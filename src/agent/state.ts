@@ -12,7 +12,9 @@ import { fileURLToPath } from "node:url";
 import type { StrategyState } from "../strategy/orchestrator.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const STATE_FILE = resolve(__dirname, "..", "..", ".agent-state.json");
+const STATE_FILE = process.env.AGENT_STATE_PATH
+  ? resolve(process.env.AGENT_STATE_PATH)
+  : resolve(__dirname, "..", "..", ".agent-state.json");
 
 export interface AgentState {
   // HCS-10 registration
