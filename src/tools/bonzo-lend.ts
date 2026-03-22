@@ -18,6 +18,7 @@ import {
 } from "@hashgraph/sdk";
 import { ethers } from "ethers";
 import { CONTRACTS } from "../config/contracts.js";
+import { CONTRACT_GAS_LIMIT } from "../config/constants.js";
 
 // LendingPool ABI fragments
 const LP_ABI = [
@@ -38,7 +39,7 @@ const ERC20_ABI = [
 const LP_IFACE = new ethers.Interface(LP_ABI);
 const LP_CONTRACT_ID = ContractId.fromSolidityAddress(CONTRACTS.lend.lendingPool);
 
-const GAS = 2_000_000;
+const GAS = CONTRACT_GAS_LIMIT;
 
 /**
  * Derive the ECDSA alias from a raw hex private key.

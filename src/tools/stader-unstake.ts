@@ -16,8 +16,9 @@ import {
   ContractFunctionParameters,
   Hbar,
 } from "@hashgraph/sdk";
-import { API, CONTRACTS } from "../config/contracts.js";
-import { HBARX_DECIMALS, UNSTAKE_COOLDOWN_MS } from "../config/constants.js";
+import { CONTRACTS } from "../config/contracts.js";
+import { fetchMarketData } from "../strategy/spread.js";
+import { HBARX_DECIMALS, UNSTAKE_COOLDOWN_MS, CONTRACT_GAS_LIMIT } from "../config/constants.js";
 
 export interface UnstakePreview {
   hbarxAmount: number;
@@ -31,38 +32,16 @@ export interface UnstakePreview {
  *
  * Derived from Bonzo oracle prices (HBARX_USD / HBAR_USD) — the on-chain
  * getExchangeRate() returns a base constant (10^8 = 1.0) not the accrued rate.
+ *
+ * Uses the cached fetchMarketData() so callers that already triggered a market
+ * fetch (e.g. compare_conversion_paths) pay zero additional API cost.
  * The client parameter is kept for API compatibility.
  */
 export async function getExchangeRate(_client?: Client): Promise<number> {
-  const res = await fetch(API.market);
-  if (!res.ok) throw new Error(`Bonzo API error: ${res.status}`);
-  const data: unknown = await res.json();
-  const reserves = Array.isArray(data) ? data : ((data as Record<string, unknown>).reserves ?? (data as Record<string, unknown>).data ?? []) as unknown[];
-
-  const find = (sym: string) =>
-    (reserves as Record<string, unknown>[]).find(
-      (r) => String(r.symbol ?? "").toUpperCase() === sym
-    );
-
-  const hbarx = find("HBARX");
-  const whbar = find("WHBAR") ?? find("HBAR");
-
-  if (!hbarx || !whbar) throw new Error("HBARX or WHBAR reserve not found");
-
-  // Prices in WAD (18 decimals) — use display string as fallback
-  const parsePrice = (r: Record<string, unknown>): number => {
-    const wad = r.price_usd_wad;
-    if (typeof wad === "string" && wad.startsWith("0x")) {
-      return Number(BigInt(wad)) / 1e18;
-    }
-    return parseFloat(String(r.price_usd_display ?? "0").replace(/[^0-9.]/g, ""));
-  };
-
-  const hbarxUsd = parsePrice(hbarx);
-  const hbarUsd = parsePrice(whbar);
-  if (hbarUsd === 0) throw new Error("HBAR price is zero");
-
-  return hbarxUsd / hbarUsd;
+  const market = await fetchMarketData();
+  if (market.hbarPriceUsd === 0) throw new Error("HBAR price is zero");
+  if (market.hbarxPriceUsd === 0) throw new Error("HBARX price is zero");
+  return market.hbarxPriceUsd / market.hbarPriceUsd;
 }
 
 /**
@@ -97,7 +76,7 @@ export async function executeUnstake(
 
   const tx = new ContractExecuteTransaction()
     .setContractId(CONTRACTS.stader.stakingContract)
-    .setGas(2_000_000)
+    .setGas(CONTRACT_GAS_LIMIT)
     .setFunction(
       "unStake",
       new ContractFunctionParameters().addUint256(amountInSmallest)
@@ -124,7 +103,7 @@ export async function executeWithdraw(
 ): Promise<{ transactionId: string; status: string }> {
   const tx = new ContractExecuteTransaction()
     .setContractId(CONTRACTS.stader.undelegationContract)
-    .setGas(2_000_000)
+    .setGas(CONTRACT_GAS_LIMIT)
     .setFunction(
       "withdraw",
       new ContractFunctionParameters().addUint256(withdrawIndex)
@@ -150,7 +129,7 @@ export async function executeStake(
 ): Promise<{ transactionId: string; status: string }> {
   const tx = new ContractExecuteTransaction()
     .setContractId(CONTRACTS.stader.stakingContract)
-    .setGas(2_000_000)
+    .setGas(CONTRACT_GAS_LIMIT)
     .setPayableAmount(new Hbar(hbarAmount))
     .setFunction("stake");
 

@@ -23,9 +23,11 @@ export async function checkPosition(
 ): Promise<PositionStatus> {
   const alerts: string[] = [];
 
-  const market = await fetchMarketData();
+  const [market, healthFactor] = await Promise.all([
+    fetchMarketData(),
+    fetchHealthFactor(accountId),
+  ]);
   const spread = analyzeSpread(market, currentVaultApy);
-  const healthFactor = await fetchHealthFactor(accountId);
 
   // Health factor alerts
   if (healthFactor !== null) {

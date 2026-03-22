@@ -1,31 +1,30 @@
 /**
  * HCS-10 message handler for the Bonzo Vault Keeper Agent.
  *
- * Listens for inbound messages on the agent's HCS-10 inbound topic,
- * processes them through the LangChain agent, and sends responses
- * back via the connection topic.
+ * Uses TopicMessageQuery (gRPC streaming) instead of REST polling:
+ *  - Messages are pushed to the agent as they reach consensus (~sub-second)
+ *  - No polling interval, no missed messages, no timestamp cursor bookkeeping
+ *  - SDK handles reconnection automatically on stream drops
  *
  * This fulfills the bounty requirement: "Must be reachable via HCS-10."
  */
 
+import {
+  Client,
+  AccountId,
+  PrivateKey,
+  TopicId,
+  TopicMessageQuery,
+} from "@hashgraph/sdk";
 import { HCS10Client } from "@hashgraphonline/standards-sdk";
 import { env } from "../config/env.js";
-import { HEDERA_MIRROR_NODE, HCS10_POLL_INTERVAL_MS, MAX_PROCESSED_TIMESTAMPS } from "../config/constants.js";
+import { HCS10_RATE_LIMIT_MS } from "../config/constants.js";
 import { loadState } from "./state.js";
 import type { AgentResult } from "./setup.js";
 
 // ---------------------------------------------------------------------------
-// Types for HCS-10 mirror node responses
+// Types
 // ---------------------------------------------------------------------------
-
-interface MirrorMessage {
-  consensus_timestamp: string;
-  message: string; // base64
-}
-
-interface MirrorTopicResponse {
-  messages?: MirrorMessage[];
-}
 
 interface HCS10Envelope {
   op?: string;
@@ -45,9 +44,13 @@ export interface HCS10Handler {
   stop: () => void;
 }
 
-/**
- * Create an HCS10Client from env config.
- */
+// Opaque handle returned by TopicMessageQuery.subscribe()
+type SubscriptionHandle = ReturnType<TopicMessageQuery["subscribe"]>;
+
+// ---------------------------------------------------------------------------
+// Client factories
+// ---------------------------------------------------------------------------
+
 function createHCS10Client(): HCS10Client {
   return new HCS10Client({
     network: env.hedera.network,
@@ -57,27 +60,52 @@ function createHCS10Client(): HCS10Client {
 }
 
 /**
- * Bounded set of processed message timestamps.
- * Evicts oldest entries when the cap is reached to prevent unbounded memory growth.
+ * A Hedera SDK client configured for mirror-node gRPC streaming.
+ * Does not need an operator — TopicMessageQuery is read-only.
  */
-const processedTimestamps = new Set<string>();
+function createMirrorClient(): Client {
+  const client =
+    env.hedera.network === "mainnet" ? Client.forMainnet() : Client.forTestnet();
 
-function markProcessed(timestamp: string): void {
-  processedTimestamps.add(timestamp);
-  if (processedTimestamps.size > MAX_PROCESSED_TIMESTAMPS) {
-    // Delete oldest entries (Set iterates in insertion order)
-    const excess = processedTimestamps.size - MAX_PROCESSED_TIMESTAMPS;
-    let i = 0;
-    for (const ts of processedTimestamps) {
-      if (i++ >= excess) break;
-      processedTimestamps.delete(ts);
+  // Set operator so the client is fully initialised (some SDK versions require it)
+  const rawKey = env.hedera.privateKey;
+  let pk: PrivateKey;
+  if (/^[0-9a-fA-F]{64}$/.test(rawKey)) {
+    try { pk = PrivateKey.fromStringECDSA(rawKey); } catch {
+      pk = PrivateKey.fromStringED25519(rawKey);
     }
+  } else {
+    try { pk = PrivateKey.fromStringDer(rawKey); } catch {
+      pk = PrivateKey.fromStringECDSA(rawKey);
+    }
+  }
+  client.setOperator(AccountId.fromString(env.hedera.accountId), pk);
+
+  return client;
+}
+
+// ---------------------------------------------------------------------------
+// Message decoder
+// ---------------------------------------------------------------------------
+
+function decodeEnvelope(raw: Uint8Array): HCS10Envelope | null {
+  try {
+    const text = Buffer.from(raw).toString("utf-8");
+    return JSON.parse(text) as HCS10Envelope;
+  } catch {
+    return null;
   }
 }
 
+// ---------------------------------------------------------------------------
+// startHCS10Listener
+// ---------------------------------------------------------------------------
+
 /**
- * Start listening for HCS-10 inbound messages and route them
- * through the LangChain agent.
+ * Subscribe to the agent's inbound HCS-10 topic via gRPC streaming.
+ * When a connection request arrives, accept it and subscribe to the new
+ * connection topic. Messages on connection topics are routed through the
+ * LangChain agent and replied to via HCS10Client.sendMessage().
  *
  * Requires the agent to be registered first (npm run register).
  */
@@ -92,157 +120,180 @@ export async function startHCS10Listener(
     );
   }
 
-  const client = createHCS10Client();
+  const hcs10Client = createHCS10Client();
+  const mirrorClient = createMirrorClient();
 
-  console.log(`[HCS-10] Listening on inbound topic: ${state.inboundTopicId}`);
-  console.log(`[HCS-10] Outbound topic: ${state.outboundTopicId}`);
+  // All active subscriptions — collected so stop() can cancel them all
+  const subscriptions: SubscriptionHandle[] = [];
 
-  let running = true;
-  let pollTimeout: ReturnType<typeof setTimeout> | null = null;
+  // Rate limit: last processed time per connection topic
+  const connectionLastMessageAt = new Map<string, number>();
 
-  // Track active connection topics we're monitoring
-  const activeConnections = new Map<string, string>(); // connectionTopicId -> remoteAccountId
+  // Per-connection processing lock — prevents overlapping agent invocations
+  const connectionProcessing = new Map<string, boolean>();
 
-  const poll = async () => {
-    if (!running) return;
+  // -------------------------------------------------------------------------
+  // Subscribe to a connection topic once a connection has been accepted
+  // -------------------------------------------------------------------------
+
+  function subscribeToConnectionTopic(
+    topicId: string,
+    remoteAccount: string
+  ): void {
+    console.log(`[HCS-10] Subscribing to connection topic: ${topicId}`);
+
+    const handle = new TopicMessageQuery()
+      .setTopicId(TopicId.fromString(topicId))
+      .setStartTime(new Date()) // only messages from this point forward
+      .subscribe(
+        mirrorClient,
+        (message) => {
+          if (!message) return;
+          void handleConnectionMessage(topicId, remoteAccount, message.contents);
+        },
+        (err) => {
+          console.error(
+            `[HCS-10] Stream error on connection ${topicId}:`,
+            err instanceof Error ? err.message : err
+          );
+        }
+      );
+
+    subscriptions.push(handle);
+  }
+
+  async function handleConnectionMessage(
+    topicId: string,
+    remoteAccount: string,
+    contents: Uint8Array
+  ): Promise<void> {
+    // Rate limit — drop if previous reply is still too recent
+    const lastAt = connectionLastMessageAt.get(topicId) ?? 0;
+    if (Date.now() - lastAt < HCS10_RATE_LIMIT_MS) return;
+
+    // Processing lock — skip if an agent call is already in flight for this topic
+    if (connectionProcessing.get(topicId)) return;
+
+    const parsed = decodeEnvelope(contents);
+    if (!parsed) return;
+
+    // Skip our own outbound messages echoed back on the shared topic
+    if (parsed.operator_id === env.hedera.accountId) return;
+    if (parsed.op !== "message" && parsed.type !== "message") return;
+
+    const userMessage = parsed.data ?? parsed.content ?? parsed.text ?? "";
+    if (!userMessage) return;
+
+    connectionLastMessageAt.set(topicId, Date.now());
+    connectionProcessing.set(topicId, true);
+
+    console.log(
+      `[HCS-10] Message from ${remoteAccount}: ${userMessage.substring(0, 80)}…`
+    );
 
     try {
-      // Fetch inbound topic messages to find connection requests
-      const mirrorUrl = `${HEDERA_MIRROR_NODE}/api/v1/topics/${state.inboundTopicId}/messages?order=desc&limit=25`;
-      const res = await fetch(mirrorUrl);
-      if (!res.ok) throw new Error(`Mirror node error: ${res.status}`);
+      const response = await processMessage(agentResult, userMessage);
+      await hcs10Client.sendMessage(topicId, response);
+      console.log(`[HCS-10] Replied on ${topicId}`);
+    } catch (err) {
+      console.error(
+        `[HCS-10] Failed to reply on ${topicId}:`,
+        err instanceof Error ? err.message : err
+      );
+    } finally {
+      connectionProcessing.set(topicId, false);
+    }
+  }
 
-      const data = (await res.json()) as MirrorTopicResponse;
-      const messages = data.messages ?? [];
+  // -------------------------------------------------------------------------
+  // Subscribe to the inbound topic for connection requests
+  // -------------------------------------------------------------------------
 
-      for (const msg of messages) {
-        const timestamp = msg.consensus_timestamp;
-        if (processedTimestamps.has(timestamp)) continue;
-        markProcessed(timestamp);
+  console.log(`[HCS-10] Subscribing to inbound topic: ${state.inboundTopicId}`);
+  console.log(`[HCS-10] Outbound topic: ${state.outboundTopicId}`);
 
-        // Decode the base64 message
-        let decoded: string;
-        try {
-          decoded = Buffer.from(msg.message, "base64").toString("utf-8");
-        } catch {
-          continue;
-        }
-
-        let parsed: HCS10Envelope;
-        try {
-          parsed = JSON.parse(decoded) as HCS10Envelope;
-        } catch {
-          continue;
-        }
-
-        // Handle connection requests (HCS-10 protocol)
-        if (parsed.op === "connection_request" || parsed.type === "connection_request") {
-          const requestingAccount = parsed.operator_id ?? parsed.account_id ?? parsed.from;
-          const rawConnectionId = parsed.connection_request_id ?? parsed.id;
-
-          if (!requestingAccount || rawConnectionId === undefined) continue;
-          const connectionId = Number(rawConnectionId);
-
-          console.log(`[HCS-10] Connection request from ${requestingAccount} (id: ${connectionId})`);
-
-          try {
-            const response = await client.handleConnectionRequest(
-              state.inboundTopicId!,
-              requestingAccount,
-              connectionId
-            );
-            console.log(
-              `[HCS-10] Accepted connection → topic ${response.connectionTopicId}`
-            );
-            if (response.connectionTopicId) {
-              activeConnections.set(response.connectionTopicId, requestingAccount);
-            }
-          } catch (err) {
-            console.error(
-              `[HCS-10] Failed to handle connection:`,
-              err instanceof Error ? err.message : err
-            );
-          }
-        }
+  const inboundHandle = new TopicMessageQuery()
+    .setTopicId(TopicId.fromString(state.inboundTopicId))
+    .setStartTime(new Date()) // ignore historical connection requests on startup
+    .subscribe(
+      mirrorClient,
+      (message) => {
+        if (!message) return;
+        void handleInboundMessage(message.contents);
+      },
+      (err) => {
+        console.error(
+          `[HCS-10] Inbound stream error:`,
+          err instanceof Error ? err.message : err
+        );
       }
+    );
 
-      // Poll active connection topics for messages
-      for (const [topicId, remoteAccount] of activeConnections) {
-        try {
-          const connRes = await fetch(
-            `${HEDERA_MIRROR_NODE}/api/v1/topics/${topicId}/messages?order=desc&limit=10`
-          );
-          if (!connRes.ok) continue;
+  subscriptions.push(inboundHandle);
 
-          const connData = (await connRes.json()) as MirrorTopicResponse;
-          const connMessages = connData.messages ?? [];
+  async function handleInboundMessage(contents: Uint8Array): Promise<void> {
+    const parsed = decodeEnvelope(contents);
+    if (!parsed) return;
 
-          for (const connMsg of connMessages) {
-            if (processedTimestamps.has(connMsg.consensus_timestamp)) continue;
-            processedTimestamps.add(connMsg.consensus_timestamp);
+    if (
+      parsed.op !== "connection_request" &&
+      parsed.type !== "connection_request"
+    ) return;
 
-            let msgDecoded: string;
-            try {
-              msgDecoded = Buffer.from(connMsg.message, "base64").toString("utf-8");
-            } catch {
-              continue;
-            }
+    const requestingAccount =
+      parsed.operator_id ?? parsed.account_id ?? parsed.from;
+    const rawConnectionId = parsed.connection_request_id ?? parsed.id;
 
-            let msgParsed: HCS10Envelope;
-            try {
-              msgParsed = JSON.parse(msgDecoded) as HCS10Envelope;
-            } catch {
-              continue;
-            }
+    if (!requestingAccount || rawConnectionId === undefined) return;
+    const connectionId = Number(rawConnectionId);
 
-            // Skip our own messages
-            if (msgParsed.operator_id === env.hedera.accountId) continue;
-            if (msgParsed.op !== "message" && msgParsed.type !== "message") continue;
+    console.log(
+      `[HCS-10] Connection request from ${requestingAccount} (id: ${connectionId})`
+    );
 
-            const userMessage = msgParsed.data ?? msgParsed.content ?? msgParsed.text ?? "";
-            if (!userMessage) continue;
-
-            console.log(`[HCS-10] Message from ${remoteAccount}: ${userMessage.substring(0, 80)}...`);
-
-            // Route through LangChain agent
-            const response = await processMessage(agentResult, userMessage);
-
-            // Send response back on connection topic
-            await client.sendMessage(topicId, response);
-            console.log(`[HCS-10] Replied on ${topicId}`);
-          }
-        } catch (err) {
-          // Silently continue
-        }
+    try {
+      const response = await hcs10Client.handleConnectionRequest(
+        state.inboundTopicId!,
+        requestingAccount,
+        connectionId
+      );
+      console.log(
+        `[HCS-10] Accepted connection → topic ${response.connectionTopicId}`
+      );
+      if (response.connectionTopicId) {
+        subscribeToConnectionTopic(
+          response.connectionTopicId,
+          requestingAccount
+        );
       }
     } catch (err) {
       console.error(
-        `[HCS-10] Poll error:`,
+        `[HCS-10] Failed to handle connection request:`,
         err instanceof Error ? err.message : err
       );
     }
+  }
 
-    if (running) {
-      pollTimeout = setTimeout(poll, HCS10_POLL_INTERVAL_MS);
-    }
-  };
-
-  // Start polling
-  poll();
+  // -------------------------------------------------------------------------
+  // Handler
+  // -------------------------------------------------------------------------
 
   return {
-    client,
+    client: hcs10Client,
     stop: () => {
-      running = false;
-      if (pollTimeout) clearTimeout(pollTimeout);
+      for (const sub of subscriptions) {
+        try { sub.unsubscribe(); } catch { /* ignore */ }
+      }
+      mirrorClient.close();
       console.log("[HCS-10] Listener stopped.");
     },
   };
 }
 
-/**
- * Process a single inbound message through the LangChain agent.
- */
+// ---------------------------------------------------------------------------
+// Agent invocation
+// ---------------------------------------------------------------------------
+
 async function processMessage(
   agentResult: AgentResult,
   message: string
@@ -251,11 +302,10 @@ async function processMessage(
     const result = await agentResult.agent.invoke({
       messages: [{ role: "user" as const, content: message }],
     });
-
-    const lastMessage = result.messages[result.messages.length - 1];
-    return typeof lastMessage.content === "string"
-      ? lastMessage.content
-      : JSON.stringify(lastMessage.content);
+    const last = result.messages[result.messages.length - 1];
+    return typeof last.content === "string"
+      ? last.content
+      : JSON.stringify(last.content);
   } catch (err) {
     return `Error processing request: ${err instanceof Error ? err.message : err}`;
   }

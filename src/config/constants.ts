@@ -54,8 +54,25 @@ export const BORROW_RATE_MAX = 5;                  // percent — too expensive 
 
 export const UNSTAKE_COOLDOWN_MS = 24 * 60 * 60 * 1000; // 1 day
 export const MONITOR_INTERVAL_MS = 60_000;
-export const HCS10_POLL_INTERVAL_MS = 10_000;
 export const STATUS_POLL_INTERVAL_MS = 30_000;
+
+// ---------------------------------------------------------------------------
+// API reliability
+// ---------------------------------------------------------------------------
+
+/** TTL for the market data cache — avoids duplicate Bonzo API calls within a monitor cycle */
+export const SPREAD_CACHE_TTL_MS = 60_000;
+/** Retry attempts for Bonzo API fetch before throwing */
+export const API_RETRY_ATTEMPTS = 3;
+/** Base delay (ms) for exponential backoff — doubles on each retry */
+export const API_RETRY_BASE_MS = 1_000;
+
+// ---------------------------------------------------------------------------
+// HCS-10
+// ---------------------------------------------------------------------------
+
+/** Minimum ms between processed messages per connection topic (spam protection) */
+export const HCS10_RATE_LIMIT_MS = 5_000;
 
 // ---------------------------------------------------------------------------
 // Limits
@@ -65,7 +82,16 @@ export const MAX_ALERTS = 50;
 export const MAX_SESSION_HISTORY = 100;
 export const SESSION_HISTORY_TRIM_TO = 80;
 export const MAX_PPS_HISTORY = 1000; // ~40 days at 1 reading/hour
-export const MAX_PROCESSED_TIMESTAMPS = 5000;
+
+// ---------------------------------------------------------------------------
+// Contract execution
+// ---------------------------------------------------------------------------
+
+/** Gas limit for Hedera ContractExecuteTransaction calls (Bonzo Lend, Stader) */
+export const CONTRACT_GAS_LIMIT = 2_000_000;
+
+/** Aave/Bonzo interest rate mode: 1 = stable (disabled on Bonzo), 2 = variable */
+export const INTEREST_RATE_MODE_VARIABLE = 2;
 
 // ---------------------------------------------------------------------------
 // Stader

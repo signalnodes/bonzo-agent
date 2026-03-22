@@ -1,5 +1,11 @@
 import { API } from "../config/contracts.js";
-import { MIN_SPREAD_THRESHOLD, HBAR_PRICE_USD_ESTIMATE } from "../config/constants.js";
+import {
+  MIN_SPREAD_THRESHOLD,
+  HBAR_PRICE_USD_ESTIMATE,
+  SPREAD_CACHE_TTL_MS,
+  API_RETRY_ATTEMPTS,
+  API_RETRY_BASE_MS,
+} from "../config/constants.js";
 
 export interface MarketData {
   hbarxBorrowApy: number;
@@ -10,6 +16,8 @@ export interface MarketData {
   usdcBorrowApy: number;
   /** HBAR/USD spot price from Bonzo oracle (used to convert getUserAccountData values to USD) */
   hbarPriceUsd: number;
+  /** HBARX/USD spot price from Bonzo oracle (used to compute HBARX→HBAR exchange rate) */
+  hbarxPriceUsd: number;
 }
 
 export interface SpreadAnalysis {
@@ -20,11 +28,60 @@ export interface SpreadAnalysis {
   recommendation: string;
 }
 
+// ---------------------------------------------------------------------------
+// Retry helper
+// ---------------------------------------------------------------------------
+
+/** Fetch with exponential-backoff retries. Only retries on 5xx or network errors. */
+async function fetchWithRetry(url: string): Promise<Response> {
+  let lastError: Error = new Error("fetch failed");
+  for (let attempt = 0; attempt < API_RETRY_ATTEMPTS; attempt++) {
+    try {
+      const res = await fetch(url);
+      if (res.ok || res.status < 500) return res; // don't retry 4xx
+      lastError = new Error(`Bonzo API error: ${res.status} ${res.statusText}`);
+    } catch (err) {
+      lastError = err instanceof Error ? err : new Error(String(err));
+    }
+    if (attempt < API_RETRY_ATTEMPTS - 1) {
+      await new Promise((r) => setTimeout(r, API_RETRY_BASE_MS * 2 ** attempt));
+    }
+  }
+  throw lastError;
+}
+
+// ---------------------------------------------------------------------------
+// Market data cache
+// ---------------------------------------------------------------------------
+
+interface MarketCache {
+  data: MarketData;
+  expiresAt: number;
+}
+
+let _marketCache: MarketCache | null = null;
+
+/** Invalidate the cache (useful in tests or after a forced refresh). */
+export function clearMarketCache(): void {
+  _marketCache = null;
+}
+
+// ---------------------------------------------------------------------------
+// Fetch
+// ---------------------------------------------------------------------------
+
 /**
  * Fetch current lending market data from Bonzo's API.
+ * Results are cached for SPREAD_CACHE_TTL_MS to prevent duplicate calls
+ * across the monitor loop and orchestrator within the same cycle.
  */
 export async function fetchMarketData(): Promise<MarketData> {
-  const res = await fetch(API.market);
+  const now = Date.now();
+  if (_marketCache && now < _marketCache.expiresAt) {
+    return _marketCache.data;
+  }
+
+  const res = await fetchWithRetry(API.market);
   if (!res.ok) {
     throw new Error(`Bonzo API error: ${res.status} ${res.statusText}`);
   }
@@ -71,7 +128,21 @@ export async function fetchMarketData(): Promise<MarketData> {
 
   const hbarPriceUsd = parseValue(whbar?.price_usd_display ?? whbar?.priceUsdDisplay);
 
-  return {
+  // HBARX price: try WAD (hex) first, then strip-and-parse the display string.
+  // parseValue for raw strings calls parseFloat which silently returns NaN on "$0.12"
+  // style formatting — strip non-numeric chars first to match the original approach.
+  const parseWadOrDisplay = (r: Record<string, unknown>): number => {
+    const wad = r.price_usd_wad;
+    if (typeof wad === "string" && wad.startsWith("0x")) {
+      return Number(BigInt(wad)) / 1e18;
+    }
+    const display = r.price_usd_display ?? r.priceUsdDisplay;
+    if (display === undefined || display === null) return 0;
+    return parseFloat(String(display).replace(/[^0-9.]/g, "")) || 0;
+  };
+  const hbarxPriceUsd = parseWadOrDisplay(hbarx);
+
+  const result: MarketData = {
     hbarxBorrowApy: parseValue(hbarx.variable_borrow_apy ?? hbarx.variableBorrowRate),
     hbarxSupplyApy: parseValue(hbarx.supply_apy ?? hbarx.liquidityRate),
     hbarxUtilization: parseValue(hbarx.utilization_rate ?? hbarx.utilization ?? hbarx.utilizationRate),
@@ -79,7 +150,11 @@ export async function fetchMarketData(): Promise<MarketData> {
     whbarBorrowApy: parseValue(whbar?.variable_borrow_apy ?? whbar?.variableBorrowRate),
     usdcBorrowApy: parseValue(usdc?.variable_borrow_apy ?? usdc?.variableBorrowRate),
     hbarPriceUsd: hbarPriceUsd > 0 ? hbarPriceUsd : HBAR_PRICE_USD_ESTIMATE,
+    hbarxPriceUsd,
   };
+
+  _marketCache = { data: result, expiresAt: Date.now() + SPREAD_CACHE_TTL_MS };
+  return result;
 }
 
 /**

@@ -72,12 +72,14 @@ export async function compareConversionPaths(
   hbarxAmount: number,
   staderExchangeRate: number,  // HBAR per HBARX from Stader oracle
   vaultApyPct: number,         // current vault APY for opportunity cost calc
+  hbarPriceUsd?: number,       // live HBAR/USD price; falls back to estimate if omitted
 ): Promise<PathComparison> {
+  const effectiveHbarPriceUsd = hbarPriceUsd ?? HBAR_PRICE_USD_ESTIMATE;
   // --- Max Yield Mode (Stader) ---
   // No swap fee, no slippage. But 1-day cooldown delays capital deployment.
   const staderHbarOut = hbarxAmount * staderExchangeRate;
   const dailyVaultReturn = vaultApyPct / 365 / 100;
-  const opportunityCostUsd = staderHbarOut * HBAR_PRICE_USD_ESTIMATE * dailyVaultReturn; // approx HBAR price
+  const opportunityCostUsd = staderHbarOut * effectiveHbarPriceUsd * dailyVaultReturn;
 
   const maxYield: ConversionQuote = {
     hbarxAmountIn: hbarxAmount,
@@ -136,7 +138,7 @@ export async function compareConversionPaths(
     rationale = `SaucerSwap price impact is ${swapQuote.priceImpactPct.toFixed(1)}% — too high. Stader gives better value despite the 1-day wait.`;
   } else {
     const hbarDiff = staderHbarOut - swapQuote.hbarReceived;
-    const hbarDiffUsd = hbarDiff * HBAR_PRICE_USD_ESTIMATE;
+    const hbarDiffUsd = hbarDiff * effectiveHbarPriceUsd;
     if (hbarDiffUsd < opportunityCostUsd * 0.5) {
       recommendation = "fast";
       rationale = `SaucerSwap costs ~${hbarDiff.toFixed(4)} HBAR (~$${hbarDiffUsd.toFixed(3)}) vs Stader, but saves a 1-day cooldown worth ~$${opportunityCostUsd.toFixed(3)} in missed vault yield. Fast Mode wins.`;
@@ -151,6 +153,6 @@ export async function compareConversionPaths(
     maxYield,
     recommendation,
     rationale,
-    opportunityCostNote: `Missing vault yield during 1-day Stader cooldown ≈ $${opportunityCostUsd.toFixed(4)} (at ${vaultApyPct.toFixed(0)}% APY on ~$${(staderHbarOut * HBAR_PRICE_USD_ESTIMATE).toFixed(2)} deployed)`,
+    opportunityCostNote: `Missing vault yield during 1-day Stader cooldown ≈ $${opportunityCostUsd.toFixed(4)} (at ${vaultApyPct.toFixed(0)}% APY on ~$${(staderHbarOut * effectiveHbarPriceUsd).toFixed(2)} deployed)`,
   };
 }

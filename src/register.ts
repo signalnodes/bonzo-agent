@@ -46,7 +46,7 @@ async function register(): Promise<void> {
       AIAgentCapability.DATA_INTEGRATION,
     ])
     .setType("autonomous")
-    .setModel(process.env.AGENT_MODEL ?? "claude-haiku-4-5-20251001")
+    .setModel(process.env.AGENT_MODEL ?? "claude-sonnet-4-6")
     .setCreator("Bonzo Vault Keeper Team")
     .setNetwork(env.hedera.network)
     .setExistingAccount(env.hedera.accountId, env.hedera.privateKey)
@@ -82,7 +82,11 @@ async function register(): Promise<void> {
   };
 
   writeFileSync(STATE_FILE, JSON.stringify(state, null, 2) + "\n");
-  console.log(`\nAgent state saved to ${STATE_FILE}`);
+  console.log(`\nState saved to ${STATE_FILE}`);
+  console.log("\nNext steps:");
+  console.log("  npm run serve   — start the web dashboard (http://localhost:3000)");
+  console.log("  npm run chat    — start the terminal chat interface");
+  console.log("\nThe agent is now reachable at inbound topic:", inboundTopicId);
 }
 
 register().catch((err) => {

@@ -48,6 +48,10 @@ async function main() {
       try {
         conversationHistory.push({ role: "user", content: trimmed });
 
+        // Show a thinking indicator while the agent calls tools
+        process.stdout.write("agent> thinking...");
+        const thinkingStart = Date.now();
+
         const result = await agent.invoke(
           { messages: conversationHistory.map(m => ({
             role: m.role as "user" | "assistant",
@@ -55,16 +59,22 @@ async function main() {
           }))},
         );
 
+        // Clear the thinking line
+        process.stdout.write("\r" + " ".repeat(40) + "\r");
+        const elapsed = ((Date.now() - thinkingStart) / 1000).toFixed(1);
+
         const lastMessage = result.messages[result.messages.length - 1];
         const responseText = typeof lastMessage.content === "string"
           ? lastMessage.content
           : JSON.stringify(lastMessage.content);
 
         conversationHistory.push({ role: "assistant", content: responseText });
-        console.log(`\nagent> ${responseText}\n`);
+        console.log(`agent> ${responseText}`);
+        console.log(`       (${elapsed}s)\n`);
       } catch (err) {
+        process.stdout.write("\r" + " ".repeat(40) + "\r");
         const msg = err instanceof Error ? err.message : String(err);
-        console.error(`\nError: ${msg}\n`);
+        console.error(`Error: ${msg}\n`);
       }
 
       prompt();

@@ -13,6 +13,7 @@
     "monitor": "tsx src/monitor.ts",
     "monitor:watch": "tsx src/monitor.ts --watch",
     "monitor:health": "tsx src/monitor-loop.ts",
+    "smoke-test": "tsx src/smoke-test.ts",
     "register": "tsx src/register.ts",
     "serve": "tsx src/server.ts"
   },

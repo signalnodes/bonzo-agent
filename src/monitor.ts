@@ -24,6 +24,10 @@ const DEFAULT_CONFIG: StrategyConfig = {
 async function runCheck() {
   const market = await fetchMarketData();
 
+  const exchangeRate = market.hbarxPriceUsd > 0 && market.hbarPriceUsd > 0
+    ? (market.hbarxPriceUsd / market.hbarPriceUsd).toFixed(6)
+    : "unavailable";
+
   console.log("=== Bonzo Lend Market Data ===");
   console.log(`HBARX Borrow APY:    ${market.hbarxBorrowApy}%`);
   console.log(`HBARX Supply APY:    ${market.hbarxSupplyApy}%`);
@@ -31,6 +35,9 @@ async function runCheck() {
   console.log(`HBARX Liquidity:     $${market.hbarxAvailableLiquidity.toLocaleString()}`);
   console.log(`WHBAR Borrow APY:    ${market.whbarBorrowApy}%`);
   console.log(`USDC Borrow APY:     ${market.usdcBorrowApy}%`);
+  console.log(`HBAR Price:          $${market.hbarPriceUsd.toFixed(4)}`);
+  console.log(`HBARX Price:         $${market.hbarxPriceUsd.toFixed(4)}`);
+  console.log(`HBARX/HBAR Rate:     ${exchangeRate}`);
 
   // Live vault APY from on-chain data (single call, result reused for spread)
   let vaultApy = 70;

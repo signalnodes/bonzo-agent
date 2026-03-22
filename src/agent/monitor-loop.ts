@@ -51,6 +51,7 @@ export interface MonitorStatus {
   latestMarket: MarketData | null;
   latestVaultApy: number | null;
   latestSpread: number | null;
+  latestHealthFactor: number | null;
 }
 
 const DEFAULT_STRATEGY_CONFIG: StrategyConfig = {
@@ -77,6 +78,7 @@ export class MonitorLoop extends EventEmitter {
   private latestMarket: MarketData | null = null;
   private latestVaultApy: number | null = null;
   private latestSpread: number | null = null;
+  private latestHealthFactor: number | null = null;
   private lastBorrowRate: number | null = null;
   private ppsReadingCount = 0;
 
@@ -122,6 +124,7 @@ export class MonitorLoop extends EventEmitter {
       latestMarket: this.latestMarket,
       latestVaultApy: this.latestVaultApy,
       latestSpread: this.latestSpread,
+      latestHealthFactor: this.latestHealthFactor,
     };
   }
 
@@ -244,6 +247,7 @@ export class MonitorLoop extends EventEmitter {
       try {
         const hf = await fetchHealthFactor(effectiveAccountId);
         if (hf !== null) {
+          this.latestHealthFactor = hf;
           if (hf < HEALTH_FACTOR_CRITICAL) {
             this.addAlert(
               "critical",
