@@ -29,22 +29,38 @@ Values are live mainnet data and will vary:
 === Bonzo Vault Keeper — Smoke Test ===
 
 1. Bonzo Lend market data...
-   HBARX borrow APY : 0.600%      ← live, varies
+   HBARX borrow APY : 0.543%      ← live, varies
    HBARX utilization: 5.3%        ← live, varies
    HBAR price (USD)  : $0.0930    ← live, varies
-   Net spread (vs 70% vault APY): 69.4%
-   Viable: true   OK
+   HBARX price (USD) : $0.1274    ← live, varies
+   WHBAR borrow APY  : 0.100%     ← live, varies
+   Net spread (vs 70% vault APY): 69.5%
+   Viable: true
+   ✓ Bonzo API
 
 2. Stader HBARX exchange rate...
-   1 HBARX = 1.371240 HBAR        ← increases over time   OK
+   1 HBARX = 1.371240 HBAR        ← increases over time
+   ✓ Stader exchange rate
 
 3. SaucerSwap quote for 10 HBARX...
    HBAR received  : 13.6891
-   Price impact   : 0.001%   OK
+   Price impact   : 0.001%
+   ✓ SaucerSwap quote
 
 4. Path comparison for 10 HBARX (vault APY=70%)...
    Recommendation : maxYield
-   Rationale      : Stader gives more HBAR and opportunity cost is low   OK
+   Rationale      : Stader gives more HBAR and opportunity cost is low
+   Fast Mode HBAR : 13.6891
+   MaxYield HBAR  : 13.7124
+   ✓ Path comparison
+
+5. Vault APY from on-chain data...
+   Best APY estimate: 70.00%      ← live on-chain read
+   ✓ Vault APY (live)
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  ✓ All 5/5 checks passed — ready to submit
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ```
 
 **Launch the web dashboard:**

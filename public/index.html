@@ -699,7 +699,7 @@
       // Fallback: if no tokens arrived (pure tool response), treat buffer
       if (!streamDiv && accumulated === '') {
         hideTyping();
-        appendMessage('agent', 'No response received — try again.');
+        appendMessage('agent', 'Agent completed the tool calls but returned no summary. Try rephrasing your message.');
       }
     } catch {
       hideTyping();
