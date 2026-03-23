@@ -3,7 +3,12 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Bonzo Vault Keeper</title>
+<title>Bonzo Vault Keeper — Hedera Apex Hackathon 2026</title>
+<meta name="description" content="AI-powered DeFi strategy agent for Bonzo Finance on Hedera. Leveraged yield via HBARX borrow + concentrated liquidity vault, with natural language chat and HCS-10 connectivity." />
+<meta property="og:title" content="Bonzo Vault Keeper" />
+<meta property="og:description" content="AI strategy copilot for Bonzo Finance on Hedera mainnet. Borrow HBARX cheaply, route via SaucerSwap or Stader, and deploy into Bonzo's concentrated liquidity vault — all through natural language." />
+<meta property="og:type" content="website" />
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🏦</text></svg>" />
 <script src="https://cdn.jsdelivr.net/npm/marked@9/marked.min.js"></script>
 <style>
   *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
@@ -458,7 +463,7 @@
       <span class="metric-value green" id="m-vault">—</span>
     </div>
     <div class="metric">
-      <span class="metric-label">Net Spread</span>
+      <span class="metric-label">Net Spread %</span>
       <span class="metric-value dim" id="m-spread">—</span>
     </div>
     <div class="metric">
@@ -470,7 +475,7 @@
       <span class="metric-value dim" id="m-util">—</span>
     </div>
     <div class="metric">
-      <span class="metric-label">Strategy</span>
+      <span class="metric-label">Entry Viable?</span>
       <span class="metric-value dim" id="m-viable">—</span>
     </div>
   </div>
@@ -531,7 +536,7 @@
 
   // Poll /api/health until agent is ready, then unlock the input
   sendBtn.disabled = true;
-  input.placeholder = 'Waiting for agent to initialize…';
+  input.placeholder = 'Connecting to Hedera mainnet…';
   (async function waitForAgent() {
     for (let attempt = 0; attempt < 60; attempt++) {
       try {
