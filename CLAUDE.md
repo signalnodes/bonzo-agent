@@ -15,7 +15,7 @@ An AI-powered DeFi agent that executes a leveraged yield strategy on Hedera:
 ## Bounty requirements
 
 - Must use **Hedera Agent Kit** (`hedera-agent-kit` on npm)
-- Must register agent via **HOL Standards SDK** (`@hashgraph-online/standards-sdk`)
+- Must register agent via **HOL Standards SDK** (`@hashgraphonline/standards-sdk`)
 - Must be reachable via HCS-10, A2A, XMTP, or MCP
 - Must support **natural language chat interface**
 - Suggested approaches: volatility-aware rebalancer, sentiment-based harvester, or intent-based UI
