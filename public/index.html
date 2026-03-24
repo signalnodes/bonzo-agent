@@ -857,5 +857,77 @@
   input.focus();
 })();
 </script>
+<!-- Password gate -->
+<div id="auth-gate" style="display:none;position:fixed;inset:0;background:rgba(8,14,28,0.97);z-index:9999;display:flex;align-items:center;justify-content:center;">
+  <div style="background:#0f172a;border:1px solid #1e2d40;border-radius:14px;padding:40px 36px;width:320px;text-align:center;">
+    <div style="font-size:2rem;margin-bottom:12px;">🏦</div>
+    <div style="font-size:1.1rem;font-weight:600;color:#e2e8f0;margin-bottom:6px;">Bonzo Vault Keeper</div>
+    <div style="font-size:0.8rem;color:#64748b;margin-bottom:24px;">Enter access password to continue</div>
+    <input id="auth-input" type="password" placeholder="Password" autocomplete="current-password"
+      style="width:100%;padding:10px 14px;background:#060d19;border:1px solid #1e2d40;border-radius:8px;color:#e2e8f0;font-size:0.95rem;outline:none;margin-bottom:12px;" />
+    <button id="auth-btn"
+      style="width:100%;padding:10px;background:#22d3ee;color:#080e1c;border:none;border-radius:8px;font-weight:700;font-size:0.95rem;cursor:pointer;">
+      Enter
+    </button>
+    <div id="auth-error" style="color:#f87171;font-size:0.8rem;margin-top:10px;min-height:1em;"></div>
+  </div>
+</div>
+<script>
+(function() {
+  const gate = document.getElementById('auth-gate');
+  const authInput = document.getElementById('auth-input');
+  const authBtn = document.getElementById('auth-btn');
+  const authError = document.getElementById('auth-error');
+
+  const stored = localStorage.getItem('bonzo_token');
+  if (stored) {
+    window.__authToken = stored;
+    gate.style.display = 'none';
+  } else {
+    gate.style.display = 'flex';
+  }
+
+  async function tryAuth() {
+    const pw = authInput.value.trim();
+    if (!pw) return;
+    authBtn.disabled = true;
+    authBtn.textContent = '…';
+    try {
+      const r = await fetch('/api/auth', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password: pw }),
+      });
+      const data = await r.json();
+      if (data.ok) {
+        window.__authToken = data.token;
+        localStorage.setItem('bonzo_token', data.token);
+        gate.style.display = 'none';
+      } else {
+        authError.textContent = 'Incorrect password.';
+        authBtn.disabled = false;
+        authBtn.textContent = 'Enter';
+      }
+    } catch {
+      authError.textContent = 'Connection error. Try again.';
+      authBtn.disabled = false;
+      authBtn.textContent = 'Enter';
+    }
+  }
+
+  authBtn.addEventListener('click', tryAuth);
+  authInput.addEventListener('keydown', function(e) { if (e.key === 'Enter') tryAuth(); });
+
+  // Patch fetch to inject auth token on all /api/ calls
+  const _fetch = window.fetch;
+  window.fetch = function(url, opts) {
+    if (typeof url === 'string' && url.startsWith('/api/') && !url.startsWith('/api/auth') && window.__authToken) {
+      opts = opts || {};
+      opts.headers = Object.assign({}, opts.headers, { 'x-auth-token': window.__authToken });
+    }
+    return _fetch.call(this, url, opts);
+  };
+})();
+</script>
 </body>
 </html>

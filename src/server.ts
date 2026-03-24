@@ -52,6 +52,19 @@ const __dirname = dirname(__filename);
 
 const PORT = parseInt(process.env.PORT ?? "3000", 10);
 const SESSION_HEADER = "x-session-id";
+const ACCESS_PASSWORD = process.env.ACCESS_PASSWORD ?? "gib311";
+
+/** Valid auth tokens (in-memory; cleared on restart) */
+const validTokens = new Set<string>();
+
+function requireAuth(req: Request, res: Response, next: () => void): void {
+  const token = req.headers["x-auth-token"] as string | undefined;
+  if (token && validTokens.has(token)) {
+    next();
+    return;
+  }
+  res.status(401).json({ error: "unauthorized" });
+}
 
 /** Per-session conversation history */
 const sessions = new Map<string, ChatMessage[]>();
@@ -156,9 +169,23 @@ async function main(): Promise<void> {
   app.use(express.static(publicDir));
 
   // -----------------------------------------------------------------------
+  // POST /api/auth  — password gate (public)
+  // -----------------------------------------------------------------------
+  app.post("/api/auth", (req: Request, res: Response): void => {
+    const { password } = req.body as { password?: string };
+    if (password === ACCESS_PASSWORD) {
+      const token = crypto.randomUUID();
+      validTokens.add(token);
+      res.json({ ok: true, token });
+    } else {
+      res.status(403).json({ ok: false, error: "wrong password" });
+    }
+  });
+
+  // -----------------------------------------------------------------------
   // POST /api/chat
   // -----------------------------------------------------------------------
-  app.post("/api/chat", async (req: Request, res: Response): Promise<void> => {
+  app.post("/api/chat", requireAuth, async (req: Request, res: Response): Promise<void> => {
     const { message, sessionId: clientSessionId } = req.body as {
       message?: string;
       sessionId?: string;
@@ -212,7 +239,7 @@ async function main(): Promise<void> {
   // -----------------------------------------------------------------------
   // POST /api/chat/stream  — SSE streaming version
   // -----------------------------------------------------------------------
-  app.post("/api/chat/stream", async (req: Request, res: Response): Promise<void> => {
+  app.post("/api/chat/stream", requireAuth, async (req: Request, res: Response): Promise<void> => {
     const { message, sessionId: clientSessionId } = req.body as {
       message?: string;
       sessionId?: string;
@@ -285,7 +312,7 @@ async function main(): Promise<void> {
   // -----------------------------------------------------------------------
   // GET /api/status
   // -----------------------------------------------------------------------
-  app.get("/api/status", async (_req: Request, res: Response): Promise<void> => {
+  app.get("/api/status", requireAuth, async (_req: Request, res: Response): Promise<void> => {
     const s = monitor?.getStatus();
     // Fall back to the shared cache (warm from startup banner) if the monitor
     // hasn't completed its first tick yet — avoids all-dashes on first page load.
@@ -363,7 +390,7 @@ async function main(): Promise<void> {
   // -----------------------------------------------------------------------
   // GET /api/alerts  (SSE)
   // -----------------------------------------------------------------------
-  app.get("/api/alerts", (req: Request, res: Response): void => {
+  app.get("/api/alerts", requireAuth, (req: Request, res: Response): void => {
     res.writeHead(200, {
       "Content-Type": "text/event-stream",
       "Cache-Control": "no-cache",
