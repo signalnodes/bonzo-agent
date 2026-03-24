@@ -843,8 +843,24 @@ export async function createAgent(): Promise<AgentResult> {
     },
   };
 
+  // Only read-only HAK tools are permitted.
+  // Transfer, approve, airdrop, and account-mutation tools are excluded to prevent
+  // jailbreak attempts that try to send funds to arbitrary addresses.
+  const HAK_READONLY_ALLOWLIST = new Set([
+    "Get Account Query",
+    "Get Account Token Balances",
+    "Get Contract Info",
+    "Get Exchange Rate",
+    "Get HBAR Balance",
+    "Get Pending Airdrops",
+    "Get Token Info",
+    "Get Topic Info",
+    "Get Topic Messages",
+    "Get Transaction Record Query",
+  ]);
+
   const toolkit = new HederaLangchainToolkit({ client: client as any, configuration });
-  const hakTools = toolkit.getTools();
+  const hakTools = toolkit.getTools().filter((t) => HAK_READONLY_ALLOWLIST.has(t.name));
   const customTools = buildCustomTools(client);
   const allTools = [...hakTools, ...customTools] as any[];
 
