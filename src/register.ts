@@ -49,8 +49,7 @@ async function register(): Promise<void> {
     .setModel(process.env.AGENT_MODEL ?? "claude-sonnet-4-6")
     .setCreator("Bonzo Vault Keeper Team")
     .setNetwork(env.hedera.network)
-    .setExistingAccount(env.hedera.accountId, env.hedera.privateKey)
-    .setInboundTopicType("public" as any);
+    .setExistingAccount(env.hedera.accountId, env.hedera.privateKey);
 
   // 4. Register with the Hashgraph Online Guarded Registry
   console.log("Creating and registering agent via HCS-10...\n");
