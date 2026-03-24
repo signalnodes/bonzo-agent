@@ -798,7 +798,7 @@ function createHederaClient(): Client {
  */
 function createLLM(): { llm: BaseChatModel; modelName: string } {
   if (env.anthropic.apiKey) {
-    const model = process.env.AGENT_MODEL ?? "claude-sonnet-4-6";
+    const model = process.env.AGENT_MODEL ?? "claude-haiku-4-5-20251001";
     console.log(`Using Anthropic Claude (${model})`);
     return {
       llm: new ChatAnthropic({
