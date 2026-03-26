@@ -79,8 +79,8 @@ export const HCS10_RATE_LIMIT_MS = 5_000;
 // ---------------------------------------------------------------------------
 
 export const MAX_ALERTS = 50;
-export const MAX_SESSION_HISTORY = 100;
-export const SESSION_HISTORY_TRIM_TO = 80;
+export const MAX_SESSION_HISTORY = 20;
+export const SESSION_HISTORY_TRIM_TO = 16;
 export const MAX_PPS_HISTORY = 1000; // ~40 days at 1 reading/hour
 
 // ---------------------------------------------------------------------------
