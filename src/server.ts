@@ -277,6 +277,8 @@ async function main(): Promise<void> {
     try {
       const stream = agent.streamEvents({ messages: langchainMessages }, { version: "v2" });
 
+      let chainFinalText = "";
+
       for await (const event of stream) {
         if (event.event === "on_tool_start") {
           send("tool_start", { tool: event.name });
@@ -286,13 +288,46 @@ async function main(): Promise<void> {
             typeof chunk?.content === "string"
               ? chunk.content
               : Array.isArray(chunk?.content)
-              ? chunk.content.map((c: { text?: string }) => c.text ?? "").join("")
+              ? chunk.content
+                  .map((c: { type?: string; text?: string }) =>
+                    c.type === "text" || c.type === "text_delta" ? (c.text ?? "") : ""
+                  )
+                  .join("")
               : "";
           if (token) {
             fullResponse += token;
             send("token", { token });
           }
+        } else if (event.event === "on_chain_end") {
+          // Capture final AI message text as fallback when no stream tokens arrived.
+          // With some LangGraph/Anthropic version combos the model's final response
+          // lands here instead of via on_chat_model_stream chunks.
+          if (fullResponse === "") {
+            const msgs: unknown[] = event.data?.output?.messages ?? [];
+            const last = msgs[msgs.length - 1] as { content?: unknown } | undefined;
+            if (last?.content) {
+              chainFinalText =
+                typeof last.content === "string"
+                  ? last.content
+                  : Array.isArray(last.content)
+                  ? (last.content as { type?: string; text?: string }[])
+                      .map((c) => (c.type === "text" ? (c.text ?? "") : ""))
+                      .join("")
+                  : "";
+            }
+          }
+        } else {
+          // Debug: log unexpected event types so container logs reveal the issue
+          if (!["on_chain_start", "on_chain_stream", "on_tool_end", "on_chat_model_start", "on_chat_model_end"].includes(event.event)) {
+            console.debug(`[stream] unhandled event: ${event.event} name=${event.name}`);
+          }
         }
+      }
+
+      // If on_chat_model_stream produced nothing, use the chain-end fallback text
+      if (fullResponse === "" && chainFinalText) {
+        fullResponse = chainFinalText;
+        send("token", { token: chainFinalText });
       }
 
       history.push({ role: "assistant", content: fullResponse });
