@@ -228,17 +228,16 @@ export class MonitorLoop extends EventEmitter {
       );
     }
 
-    // 7. Check active position health
+    // 7. Check position health — always fetch so the dashboard shows the live
+    // health factor regardless of whether strategy state has been explicitly tracked.
     const agentState = loadState();
     const strategyState = agentState.strategy;
 
-    if (strategyState && strategyState.phase !== "idle") {
-      await this.checkPositionHealth(strategyState, agentState.accountId);
-    }
+    await this.checkPositionHealth(strategyState ?? null, agentState.accountId);
   }
 
   private async checkPositionHealth(
-    state: StrategyState,
+    state: StrategyState | null,
     accountId?: string,
   ): Promise<void> {
     // Fetch health factor if we have an account
@@ -267,7 +266,8 @@ export class MonitorLoop extends EventEmitter {
       }
     }
 
-    // Evaluate exit conditions via the orchestrator
+    // Evaluate exit conditions via the orchestrator (only when strategy is active)
+    if (!state) return;
     try {
       const exitEval = await evaluateExit(state, this.strategyConfig);
       if (exitEval.shouldExit) {
