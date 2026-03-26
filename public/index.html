@@ -642,6 +642,17 @@
         body: JSON.stringify({ message: text, sessionId }),
       });
 
+      if (res.status === 401) {
+        localStorage.removeItem('bonzo_token');
+        window.__authToken = null;
+        hideTyping();
+        gate.style.display = 'flex';
+        authError.textContent = 'Session expired — please re-enter the password.';
+        isWaiting = false;
+        sendBtn.disabled = false;
+        return;
+      }
+
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
       let buffer = '';
