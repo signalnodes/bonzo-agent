@@ -7,6 +7,7 @@ import { ChatOpenAI } from "@langchain/openai";
 import { ChatAnthropic } from "@langchain/anthropic";
 import type { BaseChatModel } from "@langchain/core/language_models/chat_models";
 import { DynamicStructuredTool } from "@langchain/core/tools";
+import { SystemMessage } from "@langchain/core/messages";
 import { createReactAgent } from "@langchain/langgraph/prebuilt";
 import { z } from "zod";
 import { ethers } from "ethers";
@@ -867,10 +868,21 @@ export async function createAgent(): Promise<AgentResult> {
 
   const { llm, modelName } = createLLM();
 
+  // Wrap the system prompt with Anthropic cache_control so the ~3K-token
+  // prompt is cached across turns. Saves ~90% on input tokens for the
+  // system prompt portion after the first call in each 5-min window.
+  const cachedPrompt = new SystemMessage({
+    content: [{
+      type: "text",
+      text: SYSTEM_PROMPT,
+      cache_control: { type: "ephemeral" },
+    } as any],
+  });
+
   const agent = createReactAgent({
     llm,
     tools: allTools,
-    prompt: SYSTEM_PROMPT,
+    prompt: cachedPrompt,
   });
 
   // Hybrid routing: create a cheaper Haiku agent for lightweight turns.
@@ -888,7 +900,7 @@ export async function createAgent(): Promise<AgentResult> {
     haikuAgent = createReactAgent({
       llm: haikuLlm,
       tools: allTools,
-      prompt: SYSTEM_PROMPT,
+      prompt: cachedPrompt,
     });
     console.log(`Hybrid routing enabled (haiku ↔ ${modelName})`);
   }
