@@ -13,6 +13,7 @@ import { dirname, join } from "node:path";
 import crypto from "node:crypto";
 
 import { createAgent } from "./agent/setup.js";
+import { resolveModelTier } from "./agent/model-router.js";
 import { MonitorLoop, type Alert as MonitorAlert } from "./agent/monitor-loop.js";
 import { startHCS10Listener } from "./agent/hcs10.js";
 import { fetchMarketData } from "./strategy/spread.js";
@@ -158,8 +159,16 @@ async function main(): Promise<void> {
 
   console.log("Initializing LangChain agent...");
   const agentResult = await createAgent();
-  const { agent } = agentResult;
+  const { agent, haikuAgent } = agentResult;
   console.log(`Agent ready (${agentResult.config.toolCount} tools · ${agentResult.config.modelName}).`);
+
+  /** Pick the right agent for a given user message. */
+  const pickAgent = (message: string) => {
+    const tier = resolveModelTier(message);
+    const selected = tier === "haiku" && haikuAgent ? haikuAgent : agent;
+    const label = tier === "haiku" && haikuAgent ? "haiku" : agentResult.config.modelName;
+    return { selected, tier, label };
+  };
 
   const app = express();
   app.use(express.json());
@@ -209,7 +218,10 @@ async function main(): Promise<void> {
         content: m.content,
       }));
 
-      const result = await agent.invoke({
+      const { selected: selectedAgent, label } = pickAgent(message);
+      console.log(`[chat] tier=${label} msg="${message.slice(0, 60)}"`);
+
+      const result = await selectedAgent.invoke({
         messages: langchainMessages,
       });
 
@@ -275,7 +287,11 @@ async function main(): Promise<void> {
     let fullResponse = "";
 
     try {
-      const stream = agent.streamEvents({ messages: langchainMessages }, { version: "v2" });
+      const { selected: selectedAgent, label } = pickAgent(message);
+      console.log(`[stream] tier=${label} msg="${message.slice(0, 60)}"`);
+      send("model", { tier: label });
+
+      const stream = selectedAgent.streamEvents({ messages: langchainMessages }, { version: "v2" });
 
       let chainFinalText = "";
 

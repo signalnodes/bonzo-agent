@@ -823,7 +823,8 @@ function createLLM(): { llm: BaseChatModel; modelName: string } {
 
 export interface AgentResult {
   agent: ReturnType<typeof createReactAgent>;
-  config: { modelName: string; toolCount: number };
+  haikuAgent?: ReturnType<typeof createReactAgent>;
+  config: { modelName: string; toolCount: number; hybridEnabled: boolean };
 }
 
 /**
@@ -872,11 +873,33 @@ export async function createAgent(): Promise<AgentResult> {
     prompt: SYSTEM_PROMPT,
   });
 
+  // Hybrid routing: create a cheaper Haiku agent for lightweight turns.
+  // Disabled if HYBRID_ROUTING=false or no Anthropic key.
+  let haikuAgent: ReturnType<typeof createReactAgent> | undefined;
+  const hybridEnabled =
+    !!env.anthropic.apiKey && process.env.HYBRID_ROUTING !== "false";
+
+  if (hybridEnabled) {
+    const haikuLlm = new ChatAnthropic({
+      model: "claude-haiku-4-5-20251001",
+      temperature: 0,
+      apiKey: env.anthropic.apiKey,
+    });
+    haikuAgent = createReactAgent({
+      llm: haikuLlm,
+      tools: allTools,
+      prompt: SYSTEM_PROMPT,
+    });
+    console.log(`Hybrid routing enabled (haiku ↔ ${modelName})`);
+  }
+
   return {
     agent,
+    haikuAgent,
     config: {
       modelName,
       toolCount: allTools.length,
+      hybridEnabled,
     },
   };
 }
